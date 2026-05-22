@@ -1,0 +1,138 @@
+# Workflow
+
+## Структура веток
+
+```
+master                       ← синхрон с upstream/master, БЕЗ своих коммитов
+└── feat/personal-tweaks     ← 3 фича-коммита (split I/O, RAM pressure, CPU cores color)
+                                + коммит с этой документацией
+    └── local/build          ← + 1 коммит-костыль (Xcode 16.0 compat)
+                               ↑ ТЕКУЩАЯ РАБОЧАЯ ВЕТКА
+```
+
+**Why такая структура:**
+
+- **`master` чистый** — даёт всегда воспроизводимую точку синхронизации с апстримом. Никаких "merge-конфликтов с самим собой".
+- **`feat/personal-tweaks` отдельно от костылей** — фичи можно безопасно пушить в свой форк, показывать другим, или конвертировать в PR. Если перенесёшь фичу в апстрим, она там не утянет за собой downgrade-патчи.
+- **`local/build` поверх** — даёт работающую локальную сборку на старом Xcode без загрязнения фича-веток. Если завтра поставишь свежий Xcode, эту ветку просто удалишь.
+
+## Ежедневная работа
+
+**Всегда работай на `local/build`.** Это единственная ветка, где код реально собирается на твоей машине.
+
+```bash
+git checkout local/build
+# ... пишешь код, тестируешь ...
+git add <файлы фичи>
+git commit -m "feat: краткое описание"
+```
+
+Новый коммит ляжет **на вершину** `local/build`, после коммита с костылями. Это нормально для повседневной работы. Когда фича готова — переноси её на `feat/personal-tweaks` (см. ниже).
+
+### Перенос новой фичи на feat/personal-tweaks
+
+После коммита на `local/build`:
+
+```bash
+git log --oneline -3                          # узнать hash нового коммита
+git checkout feat/personal-tweaks
+git cherry-pick <hash>                        # копируем коммит сюда
+git checkout local/build
+git rebase feat/personal-tweaks               # переставляем костыль-коммит наверх
+```
+
+Результат: новая фича теперь и в `feat/personal-tweaks` (чистая), и в `local/build` (с костылём поверх).
+
+### Проверка целостности
+
+После любой реорганизации убеждайся, что **коммит-костыль остаётся последним** на `local/build`:
+
+```bash
+git log --oneline local/build
+# Последний (HEAD) должен быть: "local: Xcode 16.0 build compatibility — DO NOT MERGE"
+```
+
+Если съехал — `git rebase -i feat/personal-tweaks` и переставь руками.
+
+## Синхронизация с upstream
+
+Когда в `exelban/stats` выходит новый релиз или просто появились коммиты, делаем три ребейза по цепочке:
+
+### Шаг 1 — обновить master
+
+```bash
+git fetch upstream
+git checkout master
+git merge --ff-only upstream/master           # только fast-forward, без своих коммитов это всегда сработает
+git push origin master                        # обновить свой форк на GitHub
+```
+
+Если `--ff-only` отказал — значит на master случайно появился коммит. Не должно быть никогда. Если случилось — разберись прежде чем продолжать.
+
+### Шаг 2 — подтянуть upstream под фичи
+
+```bash
+git checkout feat/personal-tweaks
+git rebase master
+```
+
+Конфликты здесь — **реальные пересечения** между апстрим-изменениями и твоими фичами. Резолвить руками:
+
+```bash
+# Открываешь конфликтный файл, выбираешь что оставить
+git add <файл>
+git rebase --continue
+```
+
+После успешного ребейза:
+
+```bash
+git push --force-with-lease origin feat/personal-tweaks
+```
+
+`--force-with-lease` (а не `--force`) защищает от случайной перезаписи, если кто-то ещё пушил.
+
+### Шаг 3 — подтянуть фичи под костыль
+
+```bash
+git checkout local/build
+git rebase feat/personal-tweaks
+```
+
+Конфликты здесь — **только в 3 файлах из костыля** (или вообще никаких, если апстрим не трогал `SystemKit.swift` / `GPU/main.swift` / `Net/readers.swift`).
+
+### Шаг 4 — пересобрать
+
+```bash
+xcodebuild -project Stats.xcodeproj -scheme Stats -configuration Debug \
+  -derivedDataPath ~/Library/Developer/Xcode/DerivedData/Stats-bezmwofcmqgusfdxdepofrmqhujt \
+  build CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+```
+
+Если апстрим завёл новые места, которые не компилируются на старом Xcode — нужно расширить коммит-костыль. См. [XCODE-COMPAT.md](XCODE-COMPAT.md).
+
+## Если апстрим сам реализует одну из твоих фич
+
+Например, апстрим в каком-то релизе сделает split-bar I/O сам (issue #3233 был закрыт но мейнтейнер обещал нечто похожее). Тогда после `git rebase master`:
+
+```bash
+git checkout feat/personal-tweaks
+git rebase -i master
+```
+
+В интерактивном rebase удали строку с устаревшим коммитом (или замени `pick` на `drop`). Если апстримная реализация конфликтует с твоей — придётся разрешать руками; обычно проще выбросить свою и принять апстримную.
+
+## Правила-предохранители
+
+1. **Никогда не пушить `local/build`** в `origin`. Никаких автоматических защит нет — только дисциплина. Если случайно запушил:
+   ```bash
+   git push origin --delete local/build
+   ```
+
+2. **`master` пушится только после `--ff-only` merge с upstream**. Никогда не коммить туда напрямую.
+
+3. **`feat/personal-tweaks` после ребейза требует `--force-with-lease`**. Это нормально (история переписалась), но никогда не используй просто `--force` без `--with-lease`.
+
+4. **Коммит-костыль на `local/build` должен быть последним** (HEAD). Если съехал после новых коммитов — `git rebase -i` и переставь.
+
+5. **Доку обновлять при структурных изменениях**. Если меняешь схему веток или добавляешь фичу — отрази здесь и в [FEATURES.md](FEATURES.md).
