@@ -138,7 +138,7 @@ public class GPU: Module {
             settings: self.settingsView,
             portal: self.portalView,
             notifications: self.notificationsView,
-            preview: self.previewView,
+            preview: self.previewView
         )
         guard self.available else { return }
         

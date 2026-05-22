@@ -184,7 +184,7 @@ public class Remote: Module {
         super.init(
             moduleType: .remote,
             popup: self.popupView,
-            settings: self.settingsView,
+            settings: self.settingsView
         )
         
         self.dataReader = DataReader(.remote) { [weak self] snapshot in

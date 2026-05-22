@@ -26,6 +26,10 @@
 
 Закомментирован case `case .mode11be: return "802.11be"` в switch'е по `CWPHYMode`. Wi-Fi 7 (`.mode11be`) — это enum value в `CoreWLAN`, появившийся в SDK более новой macOS. В SDK поставляемой с Xcode 16.0 этого case нет, и компилятор падает на нём с "unknown member" в exhaustive switch.
 
+### 4. `Modules/Remote/main.swift` (добавлено при sync на v3.0.1)
+
+Удалена trailing comma после аргумента `settings: self.settingsView` в вызове `super.init(...)`. Тот же случай, что и №1/№2 — модуль `Remote` в v3.0.0 переписан и получил такую запятую. Без правки Xcode 16.0 падает с `unexpected ',' separator`.
+
 ## Что делать когда апстрим что-то новое не собирается
 
 Сценарий: ты сделал `git rebase master` в рамках синхронизации, перешёл на `local/build`, собрал — и Xcode жалуется на новые места.
