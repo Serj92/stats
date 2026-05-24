@@ -186,6 +186,8 @@
 "Label" = "Label";
 "Box" = "Box";
 "Frame" = "Frame";
+"Split download/upload" = "Split download/upload";
+"Split read/write" = "Split read/write";
 "Value" = "Value";
 "Colorize" = "Colorize";
 "Colorize value" = "Colorize value";
@@ -273,6 +275,7 @@
 "User color" = "User color";
 "Idle color" = "Idle color";
 "Cluster grouping" = "Cluster grouping";
+"Color cores by type (E/P)" = "Color cores by type (E/P)";
 "Efficiency cores color" = "Efficiency cores color";
 "Performance cores color" = "Performance cores color";
 "Total load" = "Total load";
@@ -314,6 +317,10 @@
 "App color" = "App color";
 "Wired color" = "Wired color";
 "Compressed color" = "Compressed color";
+"Memory pressure indicator" = "Memory pressure indicator";
+"Memory pressure normal color" = "Memory pressure normal color";
+"Memory pressure warning color" = "Memory pressure warning color";
+"Memory pressure critical color" = "Memory pressure critical color";
 "Free color" = "Free color";
 "Free memory (less than)" = "Free memory (less than)";
 "Swap size" = "Swap size";
