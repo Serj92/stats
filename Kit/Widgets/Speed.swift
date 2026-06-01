@@ -325,8 +325,8 @@ public class SpeedWidget: WidgetWrapper {
     // MARK: - two rows
     
     private func drawTwoRows() -> CGFloat {
-        var width: CGFloat = 7
-        var x: CGFloat = 7
+        var width: CGFloat = 4
+        var x: CGFloat = 4
         
         if self.iconAlignmentState == "right" {
             x = 0
