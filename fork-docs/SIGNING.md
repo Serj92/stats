@@ -1,0 +1,79 @@
+# Подпись и деплой
+
+Как собрать **Release** под личным сертификатом и поставить в `/Applications`, чтобы работали все модули включая Sensors (датчики).
+
+## Сертификат и Team ID — ВАЖНО, не перепутать
+
+- Локальная подпись — личным сертификатом **«Apple Development: seregaijko@gmail.com»**, SHA-1 `431DDD8EC0F96883FB8F26B7404510F9CE69102D`.
+- ⚠️ **Team ID = `T5V6W6793A`.** Это `organizationalUnitName` (OU) сертификата, оно же `TeamIdentifier` подписанного бинаря и значение `subject.OU` в codesign-требованиях.
+- ⚠️ **`88FBB4GZ5S` — это НЕ team.** Это individual-id внутри `commonName` сертификата (`Apple Development: seregaijko@gmail.com (88FBB4GZ5S)`). Очень легко принять скобки за team — **не путать**. (Однажды уже перепутали и сломали SMC — см. [SYNC-LOG.md](SYNC-LOG.md).)
+- Проверить реальный OU:
+  ```bash
+  security find-certificate -a -p -c "Apple Development: seregaijko@gmail.com" \
+    | openssl x509 -noout -subject -nameopt multiline
+  # organizationalUnitName = T5V6W6793A   ← вот это team
+  # commonName = Apple Development: ... (88FBB4GZ5S)   ← скобки = individual-id, НЕ team
+  ```
+
+## Где зашит Team ID (3 места — коммит «switch signing identity»)
+
+| Файл | Ключ | Что значит |
+|---|---|---|
+| `Stats/Supporting Files/Info.plist` | `SMPrivilegedExecutables` | приложение требует, чтобы SMC-хелпер был подписан этим OU |
+| `Stats/Supporting Files/Info.plist` | `TeamId` | team приложения |
+| `SMC/Helper/Info.plist` | `SMAuthorizedClients` | хелпер требует, чтобы клиент-приложение было подписано этим OU |
+
+Все три — `... certificate leaf[subject.OU] = T5V6W6793A`. **Должны совпадать с реальной подписью**, иначе привилегированный SMC-хелпер не регистрируется и **модуль Sensors (температура / кулеры / питание) не работает** (остальное — CPU/RAM/Disk/Net/GPU/батарея — работает и без хелпера).
+
+(Проект в build-настройках `project.pbxproj` всё ещё на апстримном `DEVELOPMENT_TEAM = RP2S87B72W` — мы перебиваем его флагом при сборке.)
+
+## Release-сборка
+
+```bash
+xcodebuild -project Stats.xcodeproj -scheme Stats -configuration Release \
+  -derivedDataPath build -destination 'platform=macOS' \
+  CODE_SIGN_IDENTITY=431DDD8EC0F96883FB8F26B7404510F9CE69102D \
+  CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=88FBB4GZ5S PROVISIONING_PROFILE_SPECIFIER="" build
+```
+
+- `CODE_SIGN_IDENTITY` — обязательно **SHA-1, не строка** (`"Apple Development"` Xcode мапит в несуществующий «Mac Development» и падает).
+- `CODE_SIGN_STYLE=Manual` — `Automatic` триггерит ту же «Mac Development» ошибку.
+- `DEVELOPMENT_TEAM=88FBB4GZ5S` здесь безвреден: manual-подпись берёт явный SHA, чья подпись всё равно даёт OU `T5V6W6793A`. (Менять на `T5V6W6793A` не обязательно — собирается и так.)
+- `build/` в `.gitignore` — артефакты не засоряют репозиторий.
+
+## Проверка перед деплоем (sanity-check)
+
+OU в требовании Info.plist должно **совпадать** с `TeamIdentifier` подписи приложения И хелпера:
+
+```bash
+REL=build/Build/Products/Release/Stats.app
+/usr/libexec/PlistBuddy -c "Print :SMPrivilegedExecutables:eu.exelban.Stats.SMC.Helper" "$REL/Contents/Info.plist"   # ... subject.OU] = T5V6W6793A
+codesign -dvvv "$REL" 2>&1 | grep TeamIdentifier                                                                     # T5V6W6793A
+codesign -dvvv "$REL/Contents/Library/LaunchServices/eu.exelban.Stats.SMC.Helper" 2>&1 | grep TeamIdentifier         # T5V6W6793A
+/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$REL/Contents/Info.plist"                             # версия
+```
+
+Все три OU = `T5V6W6793A` → датчики заработают. Различаются → Sensors сломается.
+
+## Деплой в /Applications
+
+```bash
+osascript -e 'quit app "Stats"'
+mv /Applications/Stats.app /tmp/Stats-backup.app          # /Applications юзер-писабелен, sudo не нужен
+ditto build/Build/Products/Release/Stats.app /Applications/Stats.app
+open /Applications/Stats.app
+```
+
+- При **первом запуске** свежего билда macOS попросит **админ-пароль** для (пере)установки привилегированного SMC-хелпера — авторизовать вручную, скриптом нельзя.
+- **Откат:** `mv /tmp/Stats-backup.app /Applications/Stats.app` (предварительно убив запущенную копию).
+- login-item запускает именно `/Applications/Stats.app`, так что после деплоя постоянной станет новая версия.
+
+## Debug-сборка только для проверки компиляции (без подписи)
+
+Когда нужно лишь «собирается ли под Xcode 16.0» — быстрая ad-hoc сборка, **без датчиков**:
+
+```bash
+xcodebuild -project Stats.xcodeproj -scheme Stats -configuration Debug \
+  -derivedDataPath ~/Library/Developer/Xcode/DerivedData/Stats-bezmwofcmqgusfdxdepofrmqhujt \
+  build CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+```

@@ -16,6 +16,8 @@
 - [WORKFLOW.md](fork-docs/WORKFLOW.md) — структура веток, ежедневная работа, синхронизация с upstream
 - [FEATURES.md](fork-docs/FEATURES.md) — каталог кастомных фич: что добавлено, где в коде, как пользоваться
 - [XCODE-COMPAT.md](fork-docs/XCODE-COMPAT.md) — локальные костыли для Xcode 16.0 / macOS 15
+- [SIGNING.md](fork-docs/SIGNING.md) — подпись личным сертификатом (team ID!), Release-сборка, деплой в `/Applications`
+- [SYNC-LOG.md](fork-docs/SYNC-LOG.md) — лог синхронизаций с upstream и пойманные грабли
 
 ## Быстрый старт после клона
 

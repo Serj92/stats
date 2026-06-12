@@ -111,6 +111,45 @@ xcodebuild -project Stats.xcodeproj -scheme Stats -configuration Debug \
 
 Если апстрим завёл новые места, которые не компилируются на старом Xcode — нужно расширить коммит-костыль. См. [XCODE-COMPAT.md](XCODE-COMPAT.md).
 
+### ⚠️ Нюанс: релизный тег указывает на коммит ДО бампа версии
+
+Маинтейнер ставит тег `vX.Y.Z` на коммит, где `MARKETING_VERSION` ещё **старая**, а бамп версии делает СЛЕДУЮЩИМ коммитом (он так и называется — «vX.Y.Z»). Если перебазироваться на сам тег — приложение в Settings покажет предыдущую версию (так мы один раз получили 3.0.0 вместо 3.0.1).
+
+**Поэтому базу бери на бамп-коммит (`<тег>` + 1), а не на сам тег:**
+
+```bash
+git log --oneline <тег>..upstream/master | tail -1     # нижний коммит = бамп "vX.Y.Z"
+git rebase --onto <bump-hash> <старая-база> local/build
+git show local/build:Stats.xcodeproj/project.pbxproj | grep -m1 MARKETING_VERSION   # проверка: новая версия
+```
+
+### Мажорные апдейты — прямой rebase всего стека
+
+Для крупных версий (например v2→v3) проще перебазировать `local/build` целиком одной командой, а feat-ветки подтянуть отдельно потом. **Бэкап обязательно:**
+
+```bash
+git branch backup/local-build-<старая-версия> local/build
+git rebase --onto <новая-база> <старая-база> local/build
+```
+
+Фактический лог синков (что менялось, какие грабли) — в [SYNC-LOG.md](SYNC-LOG.md).
+
+### Когда синк делает Claude — без `git rebase -i`
+
+В среде Claude Code интерактивный rebase (`-i`) недоступен. Чтобы вложить правку в коммит-костыль (или любой не-HEAD коммит) **без `-i`** — через detached-amend + переналожение:
+
+```bash
+git checkout --detach <commit>                  # встаём на нужный коммит
+# ... правим файлы ...
+git commit --amend                              # вложили правку
+git rebase --onto HEAD <commit> <старый-HEAD>   # переналожили всё, что было выше
+git branch -f local/build HEAD && git switch local/build
+```
+
+### Деплой
+
+Release-сборку с подписью и установку в `/Applications` (чтобы новая версия стала постоянной и работали датчики) — см. [SIGNING.md](SIGNING.md).
+
 ## Если апстрим сам реализует одну из твоих фич
 
 Например, апстрим в каком-то релизе сделает split-bar I/O сам (issue #3233 был закрыт но мейнтейнер обещал нечто похожее). Тогда после `git rebase master`:
