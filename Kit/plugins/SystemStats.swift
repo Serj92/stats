@@ -248,7 +248,7 @@ public class SystemStats {
                 client: Client(
                     version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown",
                     control: SystemStats.shared.control,
-                    update: SystemStats.shared.update,
+                    update: SystemStats.shared.update
                 ),
                 system: SystemStats.System(
                     platform: "macOS",
