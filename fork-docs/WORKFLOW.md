@@ -163,10 +163,9 @@ git rebase -i master
 
 ## Правила-предохранители
 
-1. **Никогда не пушить `local/build`** в `origin`. Никаких автоматических защит нет — только дисциплина. Если случайно запушил:
-   ```bash
-   git push origin --delete local/build
-   ```
+1. **`local/build` зеркалится ТОЛЬКО в свой форк (`origin`) как бэкап и НИКОГДА не уходит в upstream / не служит источником upstream-PR.** На ветке лежит коммит-костыль «DO NOT MERGE» (regressions) + смена signing-идентичности — этому не место в PR апстриму. Upstream-PR'ы делаются cherry-pick'ом из `feat/*`-веток, не из `local/build`. Бэкап `origin/local/build` обновляется force-push'ем на синке (только `--force-with-lease`, не голый `--force`).
+
+   > История правила: до 2026-06 формулировка была «вообще не пушить `local/build` в origin». На синке v3.0.4 смягчено — бэкап деплоимой ветки в **свой публичный форк** безопасен (PR'ы оттуда не делаются, SHA-1 серта и team-ID в `SIGNING.md` не секреты). Если надо именно снять с origin: `git push origin --delete local/build`.
 
 2. **`master` пушится только после `--ff-only` merge с upstream**. Никогда не коммить туда напрямую.
 
