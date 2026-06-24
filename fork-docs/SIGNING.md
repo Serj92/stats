@@ -27,6 +27,26 @@
 
 (Проект в build-настройках `project.pbxproj` всё ещё на апстримном `DEVELOPMENT_TEAM = RP2S87B72W` — мы перебиваем его флагом при сборке.)
 
+## ✅ Принятая миграция: SMC `SMJobBless` → `SMAppService.daemon` (upstream #3237, взято с v3.0.4)
+
+В **v3.0.2** апстрим перевёл установку SMC-хелпера со старого `SMJobBless` на новый `SMAppService.daemon` (коммит `e6b4c044`). До v3.0.4 мы этот коммит **сознательно пропускали**; **на синке v3.0.4 (2026-06-24) — взяли как есть**. Ниже: что это, почему развернули решение и что проверили в сборке.
+
+**Что это.** Меняется только **механизм установки** привилегированного хелпера, не функциональность. Старый API (`SMJobBless`) задепрекейчен в macOS 13. Новый путь активен на macOS 13+, legacy остаётся под `else` для < 13.
+
+**Почему развернули «не брать» → «взять».** План от 14.06 был «синкать всё, кроме #3237» в расчёте, что коммит самодостаточен. На деле при синке v3.0.4 оказалось, что **#3237 переплетён с поздними коммитами релиза**: редизайны попапов (`93fa5820`, `7654330b`, `fc8e77c6`) и фикс optional'ов (`f5f25f29`) правят те же `Kit/helpers.swift` и `Modules/Sensors/popup.swift`. Чистый `git revert e6b4c044` поверх v3.0.4 даёт **битый полу-откат**: plist удаляется, но `SMAppService`-вызовы в `helpers.swift` и build-phase «Copy LaunchDaemons» в pbxproj остаются → не собирается. Альтернатива — ручная хирургия, оставляющая постоянный кастомный дельта в подписи-чувствительных файлах (тот самый «дрейф форка»). Вывод: дешевле и чище **взять миграцию целиком**.
+
+**Почему для нас это безопасно.** Хелпер нужен **только для управления кулерами** (запись оборотов в SMC). Чтение датчиков (температура/питание/сенсоры) идёт **без** хелпера — см. таблицу выше. Кулерами мы не управляем → `SMAppService.register()` у нас вообще не дёргается (срабатывает только при установке хелпера, т.е. при включении управления кулерами). Если когда-нибудь понадобится: на не-нотаризованной Development-сборке регистрация может повиснуть в `.requiresApproval` — включать вручную в System Settings → Login Items.
+
+**Что миграция привнесла (теперь в нашей сборке).**
+- Build phase **«Copy LaunchDaemons»** → кладёт `eu.exelban.Stats.SMC.Helper.plist` в `Contents/Library/LaunchDaemons/` (в plist: `Label`, `BundleProgram` на хелпер в `LaunchServices/`, `MachServices`, `AssociatedBundleIdentifiers = eu.exelban.Stats`).
+- `Kit/helpers.swift` — `SMCHelper.install/isInstalled/uninstall/checkForUpdate` получили ветку `#available(macOS 13)` на `SMAppService.daemon(plistName:)`; legacy-код (`SMJobBless` + `AuthorizationCreate`) уехал в `installLegacy`/`legacyIsInstalled`.
+- `Modules/Sensors/popup.swift`, `settings.swift` — мелкие правки под новый статус.
+
+**Проверено в Release-сборке v3.0.4 (sanity-check прошёл).**
+- `LaunchDaemons/…Helper.plist` — это только манифест; `BundleProgram` ссылается на хелпер в `Contents/Library/LaunchServices/`, отдельного бинаря для подписи нет.
+- Все **3 team-ID места** (`SMPrivilegedExecutables` / app `TeamIdentifier` / хелпер) = `T5V6W6793A` → датчики работают.
+- Сборка под Xcode 16.0 потребовала ровно одну новую trailing-comma правку (`Kit/plugins/SystemStats.swift`, см. [XCODE-COMPAT.md](XCODE-COMPAT.md) №5).
+
 ## Release-сборка
 
 ```bash
