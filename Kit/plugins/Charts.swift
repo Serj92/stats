@@ -216,7 +216,12 @@ public class LineChartView: ChartView {
     private var cursor: NSPoint? = nil
     private var stop: Bool = false
     private var lastSlideAt: CFTimeInterval = 0
-    
+
+    // The fill gradient only depends on color/transparency; cache it and rebuild on change
+    // instead of allocating an NSGradient on every draw (incl. each mouse-move while hovering).
+    private var cachedGradient: NSGradient?
+    private var cachedGradientKey: (NSColor, Bool)?
+
     private var tooltipEnabledSnapshot: Bool {
         self.read { self.isTooltipEnabled }
     }
@@ -307,11 +312,15 @@ public class LineChartView: ChartView {
         if !transparent {
             gradientColor = color.withAlphaComponent(0.8)
         }
-        let gradient = NSGradient(colors: [
-            gradientColor.withAlphaComponent(0.5),
-            gradientColor.withAlphaComponent(1.0)
-        ])
-        
+        if self.cachedGradientKey?.0 != color || self.cachedGradientKey?.1 != transparent {
+            self.cachedGradient = NSGradient(colors: [
+                gradientColor.withAlphaComponent(0.5),
+                gradientColor.withAlphaComponent(1.0)
+            ])
+            self.cachedGradientKey = (color, transparent)
+        }
+        let gradient = self.cachedGradient
+
         let offset: CGFloat = 1 / (NSScreen.main?.backingScaleFactor ?? 1)
         let xLegendHeight: CGFloat = xLegend ? 14 : 0
         let yLegendWidth: CGFloat = yLegend ? 30 : 0
@@ -392,8 +401,9 @@ public class LineChartView: ChartView {
             ]
             
             var str: String = ""
-            let flatList = originalPoints.map{ $0?.value ?? 0 }
-            if let value = flatList.max() {
+            if !originalPoints.isEmpty {
+                var value = -Double.greatestFiniteMagnitude
+                for opt in originalPoints { value = Swift.max(value, opt?.value ?? 0) }
                 str = toolTipFunc != nil ? toolTipFunc!(DoubleValue(value)) : "\(Int(value.rounded(toPlaces: 2) * 100))\(suffix)"
             }
             let textWidth = str.widthOfString(usingFont: stringAttributes[NSAttributedString.Key.font] as! NSFont)
@@ -1276,6 +1286,7 @@ public class ColumnChartView: ChartView {
         let partitionSize: CGSize = CGSize(width: (self.frame.width - (count*spacing)) / count, height: self.frame.height)
         let radius: CGFloat = min(3, partitionSize.width/2)
         
+        let needList = self.cursor != nil
         var list: [(value: Double, path: NSBezierPath)] = []
         var x: CGFloat = 0
         for i in 0..<values.count {
@@ -1309,7 +1320,7 @@ public class ColumnChartView: ChartView {
             }
             
             x += partitionSize.width + spacing
-            list.append((value: value.value, path: track))
+            if needList { list.append((value: value.value, path: track)) }
         }
         
         if let p = self.cursor {
@@ -1524,9 +1535,8 @@ public class BarChartView: ChartView {
         context.saveGState()
         clipPath.addClip()
         
-        var list: [(value: Double, path: NSBezierPath)] = []
         var offset: CGFloat = 0
-        
+
         for value in values {
             let color = value.color ?? .controlAccentColor
             let segmentLength = CGFloat(value.value / adjustedTotal) * (isHorizontal ? self.frame.width : self.frame.height)
@@ -1538,8 +1548,7 @@ public class BarChartView: ChartView {
             let path = NSBezierPath(rect: rect)
             color.setFill()
             path.fill()
-            
-            list.append((value: value.value, path: path))
+
             offset += segmentLength
         }
         
