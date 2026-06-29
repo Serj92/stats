@@ -134,6 +134,7 @@ public class MemoryWidget: WidgetWrapper {
     }
     
     public func setValue(_ value: (String, String), usedPercentage: Double) {
+        guard self.value != value || self.percentage != usedPercentage else { return }
         self.value = value
         self.percentage = usedPercentage
         

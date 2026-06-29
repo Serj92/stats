@@ -1017,6 +1017,7 @@ public class PieChartView: ChartView {
     }
     
     public func setSegments(_ segments: [ColorValue]) {
+        guard self.read({ self.segments != segments }) else { return }
         self.write { self.segments = segments }
         self.fadeOrDisplay()
     }
@@ -1089,6 +1090,7 @@ public class TachometerGraphView: ChartView {
     }
     
     internal func setSegments(_ segments: [ColorValue]) {
+        guard self.read({ self.segments != segments }) else { return }
         self.write { self.segments = segments }
         self.fadeOrDisplay()
     }
@@ -1228,6 +1230,7 @@ public class GaugeChartView: ChartView {
     }
     
     public func setSegments(_ segments: [ColorValue]) {
+        guard self.read({ self.segments != segments }) else { return }
         self.write { self.segments = segments }
         self.fadeOrDisplay()
     }
