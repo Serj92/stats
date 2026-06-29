@@ -89,9 +89,15 @@ public class StackWidget: WidgetWrapper {
         
         var values: [Stack_t] = []
         var mode: StackMode = .auto
+        var monospaced = false
+        var fixedSize = false
+        var alignment: NSTextAlignment = .left
         self.queue.sync {
             values = self.values
             mode = self.modeState
+            monospaced = self.monospacedFontState
+            fixedSize = self.fixedSizeState
+            alignment = self.alignment
         }
         
         guard !values.isEmpty else {
@@ -112,9 +118,9 @@ public class StackWidget: WidgetWrapper {
                 
                 var width: CGFloat = 0
                 if mode == .auto && secondElement == nil {
-                    width += self.drawOneRow(x, firstElement)
+                    width += self.drawOneRow(x, firstElement, monospaced: monospaced, fixedSize: fixedSize, alignment: alignment)
                 } else {
-                    width += self.drawTwoRows(x, firstElement, secondElement)
+                    width += self.drawTwoRows(x, firstElement, secondElement, monospaced: monospaced, fixedSize: fixedSize, alignment: alignment)
                 }
                 
                 x += width
@@ -127,7 +133,7 @@ public class StackWidget: WidgetWrapper {
                 
                 i += 1
             case .oneRow:
-                let width = self.drawOneRow(x, values[i])
+                let width = self.drawOneRow(x, values[i], monospaced: monospaced, fixedSize: fixedSize, alignment: alignment)
                 
                 x += width
                 totalWidth += width
@@ -147,26 +153,17 @@ public class StackWidget: WidgetWrapper {
         self.setWidth(totalWidth)
     }
     
-    private func drawOneRow(_ x: CGFloat, _ element: Stack_t) -> CGFloat {
-        var monospacedFontState: Bool = false
-        var fixedSizeState: Bool = false
-        var alignment: NSTextAlignment = .left
-        self.queue.sync {
-            monospacedFontState = self.monospacedFontState
-            fixedSizeState = self.fixedSizeState
-            alignment = self.alignment
-        }
-        
+    private func drawOneRow(_ x: CGFloat, _ element: Stack_t, monospaced: Bool, fixedSize: Bool, alignment: NSTextAlignment) -> CGFloat {
         var font: NSFont = NSFont.systemFont(ofSize: 13, weight: .regular)
-        if monospacedFontState {
+        if monospaced {
             font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular)
         }
-        
+
         let style = NSMutableParagraphStyle()
         style.alignment = alignment
-        
+
         var width: CGFloat = self.oneRowWidth
-        if !fixedSizeState {
+        if !fixedSize {
             width = element.value.widthOfString(usingFont: font).rounded(.up) + 2
         }
         
@@ -181,34 +178,25 @@ public class StackWidget: WidgetWrapper {
         return width
     }
     
-    private func drawTwoRows(_ x: CGFloat, _ topElement: Stack_t, _ bottomElement: Stack_t?) -> CGFloat {
+    private func drawTwoRows(_ x: CGFloat, _ topElement: Stack_t, _ bottomElement: Stack_t?, monospaced: Bool, fixedSize: Bool, alignment: NSTextAlignment) -> CGFloat {
         let rowHeight: CGFloat = self.frame.height / 2
-        var monospacedFontState: Bool = false
-        var fixedSizeState: Bool = false
-        var alignment: NSTextAlignment = .left
-        self.queue.sync {
-            monospacedFontState = self.monospacedFontState
-            fixedSizeState = self.fixedSizeState
-            alignment = self.alignment
-        }
-        
         var font: NSFont
-        if monospacedFontState {
+        if monospaced {
             font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .light)
         } else {
             font = NSFont.systemFont(ofSize: 10, weight: .light)
         }
         let style = NSMutableParagraphStyle()
         style.alignment = alignment
-        
+
         let attributes = [
             NSAttributedString.Key.font: font,
             NSAttributedString.Key.foregroundColor: NSColor.textColor,
             NSAttributedString.Key.paragraphStyle: style
         ]
-        
+
         var width: CGFloat = self.twoRowWidth
-        if !fixedSizeState {
+        if !fixedSize {
             let firstRowWidth = topElement.value.widthOfString(usingFont: font)
             let secondRowWidth = bottomElement?.value.widthOfString(usingFont: font) ?? 0
             width = max(20, max(firstRowWidth, secondRowWidth)).rounded(.up) + 2

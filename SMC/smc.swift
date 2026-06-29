@@ -161,7 +161,12 @@ public class SMC {
     public static let shared = SMC()
     private var conn: io_connect_t = 0
     private var _fanModeKeyIsLower: Bool?
-    
+
+    // Key metadata (dataSize/dataType) is immutable for a given SMC key, so cache it
+    // to skip the redundant readKeyInfo syscall on every subsequent read of that key.
+    private var keyInfoCache: [String: (dataSize: IOByteCount32, dataType: String)] = [:]
+    private let keyInfoCacheLock = NSLock()
+
     public init() {
         var result: kern_return_t
         var iterator: io_iterator_t = 0
@@ -640,18 +645,34 @@ public class SMC {
         var output = SMCKeyData_t()
         
         input.key = FourCharCode(fromString: value.pointee.key)
-        input.data8 = SMCKeys.readKeyInfo.rawValue
-        
-        result = call(SMCKeys.kernelIndex.rawValue, input: &input, output: &output)
-        if result != kIOReturnSuccess {
-            return result
+
+        self.keyInfoCacheLock.lock()
+        let cachedInfo = self.keyInfoCache[value.pointee.key]
+        self.keyInfoCacheLock.unlock()
+
+        if let cachedInfo {
+            value.pointee.dataSize = UInt32(cachedInfo.dataSize)
+            value.pointee.dataType = cachedInfo.dataType
+            input.keyInfo.dataSize = cachedInfo.dataSize
+        } else {
+            input.data8 = SMCKeys.readKeyInfo.rawValue
+
+            result = call(SMCKeys.kernelIndex.rawValue, input: &input, output: &output)
+            if result != kIOReturnSuccess {
+                return result
+            }
+
+            value.pointee.dataSize = UInt32(output.keyInfo.dataSize)
+            value.pointee.dataType = output.keyInfo.dataType.toString()
+            input.keyInfo.dataSize = output.keyInfo.dataSize
+
+            self.keyInfoCacheLock.lock()
+            self.keyInfoCache[value.pointee.key] = (output.keyInfo.dataSize, value.pointee.dataType)
+            self.keyInfoCacheLock.unlock()
         }
-        
-        value.pointee.dataSize = UInt32(output.keyInfo.dataSize)
-        value.pointee.dataType = output.keyInfo.dataType.toString()
-        input.keyInfo.dataSize = output.keyInfo.dataSize
+
         input.data8 = SMCKeys.readBytes.rawValue
-        
+
         result = call(SMCKeys.kernelIndex.rawValue, input: &input, output: &output)
         if result != kIOReturnSuccess {
             return result

@@ -709,6 +709,7 @@ public class KeyboardShartcutView: NSStackView {
     private var keyCodes: [UInt16] = []
     private var value: [UInt16] = []
     private var interaction: Bool = false
+    private var keyMonitor: Any?
     
     public init(callback: @escaping (_ value: [UInt16]) -> Void, value: [UInt16]) {
         self.callback = callback
@@ -733,14 +734,20 @@ public class KeyboardShartcutView: NSStackView {
         self.startButton = startButton
         self.stopButton = stopButton
         
-        NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
+        self.keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
             self?.handleKeyEvent(event)
             return event
         }
     }
-    
+
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        if let keyMonitor = self.keyMonitor {
+            NSEvent.removeMonitor(keyMonitor)
+        }
     }
     
     @objc private func startListening() {

@@ -40,7 +40,7 @@ public class SpeedWidget: WidgetWrapper {
     private var iconColorView: NSPopUpButton? = nil
     private var displayModeView: NSPopUpButton? = nil
     
-    private var inputColor: (String) -> NSColor {{ state in
+    private func inputColor(_ state: String) -> NSColor {
         if state == "none" { return .textColor }
         var color = self.monochromeState ? MonochromeColor.blue : (self.inputColorState.additional as? NSColor ?? NSColor.systemBlue)
         if self.inputValue < 1024 {
@@ -51,8 +51,8 @@ public class SpeedWidget: WidgetWrapper {
             }
         }
         return color
-    }}
-    private var outputColor: (String) -> NSColor {{ state in
+    }
+    private func outputColor(_ state: String) -> NSColor {
         if state == "none" { return .textColor }
         var color = self.monochromeState ? MonochromeColor.red : (self.outputColorState.additional as? NSColor ?? NSColor.red)
         if self.outputValue < 1024 {
@@ -63,7 +63,7 @@ public class SpeedWidget: WidgetWrapper {
             }
         }
         return color
-    }}
+    }
     
     private var valueAlignment: NSTextAlignment {
         get {

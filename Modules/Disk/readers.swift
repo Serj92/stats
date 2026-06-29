@@ -41,7 +41,10 @@ internal class CapacityReader: Reader<Disks> {
     }
     
     private var purgableSpace: [URL: (Date, Int64)] = [:]
-    
+    private lazy var session: DASession? = DASessionCreate(kCFAllocatorDefault)
+    private var smartCache: [String: (Date, smart_t?)] = [:]
+    private let smartCacheTTL: TimeInterval = 60
+
     public override func read() {
         let keys: [URLResourceKey] = [.volumeNameKey]
         let removableState = Store.shared.bool(key: "Disk_removable", defaultValue: false)
@@ -49,7 +52,7 @@ internal class CapacityReader: Reader<Disks> {
             return
         }
         
-        guard let session = DASessionCreate(kCFAllocatorDefault) else {
+        guard let session = self.session else {
             error("cannot create main DASessionCreate()", log: self.log)
             return
         }
@@ -160,7 +163,18 @@ internal class CapacityReader: Reader<Disks> {
     
     private func getSMARTDetails(for BSDName: String) -> smart_t? {
         guard self.SMART else { return nil }
-        
+
+        // SMART data (temperature/wear) changes on the order of minutes; the IORegistry
+        // walk below is expensive, so serve from a short-lived cache between refreshes.
+        if let cached = self.smartCache[BSDName], Date().timeIntervalSince(cached.0) < self.smartCacheTTL {
+            return cached.1
+        }
+        let value = self.readSMARTDetails(for: BSDName)
+        self.smartCache[BSDName] = (Date(), value)
+        return value
+    }
+
+    private func readSMARTDetails(for BSDName: String) -> smart_t? {
         var disk = IOServiceGetMatchingService(kIOMainPortDefault, IOBSDNameMatching(kIOMainPortDefault, 0, BSDName.cString(using: .utf8)))
         guard disk != kIOReturnSuccess else { return nil }
         defer { IOObjectRelease(disk) }
@@ -248,7 +262,8 @@ internal class CapacityReader: Reader<Disks> {
 
 internal class ActivityReader: Reader<Disks> {
     internal var list: Disks = Disks()
-    
+    private lazy var session: DASession? = DASessionCreate(kCFAllocatorDefault)
+
     override func setup() {
         self.setInterval(1)
     }
@@ -260,7 +275,7 @@ internal class ActivityReader: Reader<Disks> {
             return
         }
         
-        guard let session = DASessionCreate(kCFAllocatorDefault) else {
+        guard let session = self.session else {
             error("cannot create a DASessionCreate()", log: self.log)
             return
         }
@@ -450,11 +465,13 @@ public class ProcessReader: Reader<[Disk_process]> {
         guard self.numberOfProcesses != 0, let output = runProcess(path: "/bin/ps", args: ["-Aceo pid,args", "-r"]) else { return }
         
         var snapshot = self.list
+        var seenPIDs = Set<Int32>()
         var processes: [Disk_process] = []
         output.enumerateLines { (line, _) in
             let str = line.trimmingCharacters(in: .whitespaces)
             let pidFind = str.findAndCrop(pattern: "^\\d+")
             guard let pid = Int32(pidFind.cropped) else { return }
+            seenPIDs.insert(pid)
             let name = pidFind.remain.findAndCrop(pattern: "^[^ ]+").cropped
             
             var usage = rusage_info_current()
@@ -483,7 +500,7 @@ public class ProcessReader: Reader<[Disk_process]> {
             snapshot[pid]?.read = bytesRead
             snapshot[pid]?.write = bytesWritten
         }
-        self.list = snapshot
+        self.list = snapshot.filter { seenPIDs.contains($0.key) } // drop processes that have exited, keeping the map bounded
         
         processes.sort {
             let firstMax = max($0.read, $0.write)

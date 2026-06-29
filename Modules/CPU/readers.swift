@@ -26,6 +26,11 @@ internal class LoadReader: Reader<CPU_Load> {
     private var numCPUsU: natural_t = 0
     private var usagePerCore: [Double] = []
     private var cores: [core_s]? = nil
+    // Core type partition is fixed for the hardware; precompute (coreID, enumerationIndex)
+    // per type once in setup() instead of filter/enumerate-ing `cores` on every tick.
+    private var eCores: [(id: Int, idx: Int)] = []
+    private var pCores: [(id: Int, idx: Int)] = []
+    private var sCores: [(id: Int, idx: Int)] = []
     
     public override func setup() {
         self.hasHyperthreadingCores = sysctlByName("hw.physicalcpu") != sysctlByName("hw.logicalcpu")
@@ -37,14 +42,19 @@ internal class LoadReader: Reader<CPU_Load> {
             }
         }
         self.cores = SystemKit.shared.device.info.cpu?.cores
+        if let cores = self.cores {
+            self.eCores = cores.filter({ $0.type == .efficiency }).enumerated().map { (i, c) in (id: Int(c.id), idx: i) }
+            self.pCores = cores.filter({ $0.type == .performance }).enumerated().map { (i, c) in (id: Int(c.id), idx: i) }
+            self.sCores = cores.filter({ $0.type == .super }).enumerated().map { (i, c) in (id: Int(c.id), idx: i) }
+        }
     }
     
     public override func read() {
         let result: kern_return_t = host_processor_info(mach_host_self(), PROCESSOR_CPU_LOAD_INFO, &self.numCPUsU, &self.cpuInfo, &self.numCpuInfo)
         if result == KERN_SUCCESS {
             self.CPUUsageLock.lock()
-            self.usagePerCore = []
-            
+            self.usagePerCore.removeAll(keepingCapacity: true)
+
             for i in 0 ..< Int32(numCPUs) {
                 var inUse: Int32
                 var total: Int32
@@ -77,7 +87,7 @@ internal class LoadReader: Reader<CPU_Load> {
                 var i = 0
                 var a = 0
                 
-                self.response.usagePerCore = []
+                self.response.usagePerCore.removeAll(keepingCapacity: true)
                 while i < Int(self.usagePerCore.count/2) {
                     a = i*2
                     if self.usagePerCore.indices.contains(a) && self.usagePerCore.indices.contains(a+1) {
@@ -129,25 +139,16 @@ internal class LoadReader: Reader<CPU_Load> {
         self.previousInfo = cpuInfo!
         self.response.totalUsage = self.response.systemLoad + self.response.userLoad
         
-        if let cores = self.cores {
-            let eCoresList: [Double] = cores.filter({ $0.type == .efficiency }).enumerated().compactMap { (i, c) -> Double? in
-                if self.response.usagePerCore.indices.contains(Int(c.id)) {
-                    return self.response.usagePerCore[Int(c.id)]
+        if self.cores != nil {
+            let usage = { (entry: (id: Int, idx: Int)) -> Double in
+                if self.response.usagePerCore.indices.contains(entry.id) {
+                    return self.response.usagePerCore[entry.id]
                 }
-                return i < self.usagePerCore.count ? self.usagePerCore[i] : 0
+                return entry.idx < self.usagePerCore.count ? self.usagePerCore[entry.idx] : 0
             }
-            let pCoresList: [Double] = cores.filter({ $0.type == .performance }).enumerated().compactMap { (i, c) -> Double? in
-                if self.response.usagePerCore.indices.contains(Int(c.id)) {
-                    return self.response.usagePerCore[Int(c.id)]
-                }
-                return i < self.usagePerCore.count ? self.usagePerCore[i] : 0
-            }
-            let sCoresList: [Double] = cores.filter({ $0.type == .super }).enumerated().compactMap { (i, c) -> Double? in
-                if self.response.usagePerCore.indices.contains(Int(c.id)) {
-                    return self.response.usagePerCore[Int(c.id)]
-                }
-                return i < self.usagePerCore.count ? self.usagePerCore[i] : 0
-            }
+            let eCoresList = self.eCores.map(usage)
+            let pCoresList = self.pCores.map(usage)
+            let sCoresList = self.sCores.map(usage)
             
             if !eCoresList.isEmpty {
                 self.response.usageECores = eCoresList.reduce(0, +)/Double(eCoresList.count)

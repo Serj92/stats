@@ -205,6 +205,7 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate {
         self.reachability.unreachable = {}
         self.stopListeningForWifiEvents()
         self.wifiClient.delegate = nil
+        NotificationCenter.default.removeObserver(self)
     }
     
     public override func read() {
@@ -240,7 +241,7 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate {
         
         self.usage.status = self.reachability.isReachable
         
-        if self.vpnConnection && self.VPNMode {
+        if self.VPNMode && self.vpnConnection { // VPNMode is a cheap cached flag; gate the expensive proxy-settings lookup behind it
             self.usage.bandwidth.upload /= 2
             self.usage.bandwidth.download /= 2
         }
@@ -269,7 +270,7 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate {
             }
             self.usage.interface?.status = (pointer.pointee.ifa_flags & UInt32(IFF_UP)) != 0
             
-            if let wifiInterface = CWWiFiClient.shared().interface(withName: self.interfaceID) {
+            if let wifiInterface = self.wifiClient.interface(withName: self.interfaceID) {
                 self.usage.interface?.transmitRate = wifiInterface.transmitRate()
             } else if let raw = pointer.pointee.ifa_data {
                 let dataPtr = raw.assumingMemoryBound(to: if_data.self)

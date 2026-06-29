@@ -180,8 +180,14 @@ public class NetworkChart: WidgetWrapper {
             width: box.bounds.width - (offset*2+lineWidth),
             height: box.bounds.height - offset
         )
-        var topMax: Double = (reverseOrderState ? points.map{ $0.1 }.max() : points.map{ $0.0 }.max()) ?? 0
-        var bottomMax: Double = (reverseOrderState ? points.map{ $0.0 }.max() : points.map{ $0.1 }.max()) ?? 0
+        var max0: Double = 0
+        var max1: Double = 0
+        for p in points {
+            if p.0 > max0 { max0 = p.0 }
+            if p.1 > max1 { max1 = p.1 }
+        }
+        var topMax: Double = reverseOrderState ? max1 : max0
+        var bottomMax: Double = reverseOrderState ? max0 : max1
         if topMax == 0 {
             topMax = 1
         }

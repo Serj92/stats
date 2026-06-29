@@ -43,11 +43,11 @@ open class Reader<T: Codable>: NSObject, ReaderInternal_p {
     public var log: NextLog {
         NextLog.shared.copy(category: "\(String(describing: self))")
     }
-    private let valueQueue = DispatchQueue(label: "eu.exelban.readerActiveQueue")
+    private let stateLock = NSLock()
     private var _value: T?
     public var value: T? {
-        get { self.valueQueue.sync { self._value } }
-        set { self.valueQueue.sync { self._value = newValue } }
+        get { self.stateLock.lock(); defer { self.stateLock.unlock() }; return self._value }
+        set { self.stateLock.lock(); self._value = newValue; self.stateLock.unlock() }
     }
     public var name: String {
         String(NSStringFromClass(type(of: self)).split(separator: ".").last ?? "unknown")
@@ -66,15 +66,17 @@ open class Reader<T: Codable>: NSObject, ReaderInternal_p {
     
     private let module: ModuleType
     private var history: Bool
+    // Reader identity is fixed for its lifetime; build the DB/key string once instead of
+    // re-interpolating NSStringFromClass(...) on every tick in callback().
+    private lazy var moduleKey: String = "\(self.module.stringValue)@\(self.name)"
     private var repeatTask: Repeater?
     private var locked: Bool = true
     private var initlizalized: Bool = false
     
-    private let activeQueue = DispatchQueue(label: "eu.exelban.readerActiveQueue")
     private var _active: Bool = false
     public var active: Bool {
-        get { self.activeQueue.sync { self._active } }
-        set { self.activeQueue.sync { self._active = newValue } }
+        get { self.stateLock.lock(); defer { self.stateLock.unlock() }; return self._active }
+        set { self.stateLock.lock(); self._active = newValue; self.stateLock.unlock() }
     }
     
     private var lastDBWrite: Date? = nil
@@ -90,8 +92,8 @@ open class Reader<T: Codable>: NSObject, ReaderInternal_p {
         self.callbackHandler = callback
         
         super.init()
-        DB.shared.setup(T.self, "\(module.stringValue)@\(self.name)")
-        if let lastValue = DB.shared.findOne(T.self, key: "\(module.stringValue)@\(self.name)") {
+        DB.shared.setup(T.self, self.moduleKey)
+        if let lastValue = DB.shared.findOne(T.self, key: self.moduleKey) {
             self.value = lastValue
             callback(lastValue)
         }
@@ -101,7 +103,7 @@ open class Reader<T: Codable>: NSObject, ReaderInternal_p {
     }
     
     deinit {
-        DB.shared.insert(key: "\(self.module.stringValue)@\(self.name)", value: self.value, ts: self.history)
+        DB.shared.insert(key: self.moduleKey, value: self.value, ts: self.history)
     }
     
     public func initStoreValues(title: String) {
@@ -111,7 +113,7 @@ open class Reader<T: Codable>: NSObject, ReaderInternal_p {
     }
     
     public func callback(_ value: T?) {
-        let moduleKey = "\(self.module.stringValue)@\(self.name)"
+        let moduleKey = self.moduleKey
         self.value = value
         if let value {
             self.callbackHandler(value)
@@ -185,7 +187,7 @@ open class Reader<T: Codable>: NSObject, ReaderInternal_p {
     }
     
     public func save(_ value: T) {
-        DB.shared.insert(key: "\(self.module.stringValue)@\(self.name)", value: value, ts: self.history, force: true)
+        DB.shared.insert(key: self.moduleKey, value: value, ts: self.history, force: true)
     }
     
     private func delayToNextSecondBoundary() -> TimeInterval {

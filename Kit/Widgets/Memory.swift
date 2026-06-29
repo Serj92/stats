@@ -20,7 +20,14 @@ public class MemoryWidget: WidgetWrapper {
     private var colorState: SColor = .monochrome
     
     private let width: CGFloat = 50
-    
+
+    private static let font = NSFont.systemFont(ofSize: 9, weight: .light)
+    private static let rightAlignStyle: NSParagraphStyle = {
+        let style = NSMutableParagraphStyle()
+        style.alignment = .right
+        return style
+    }()
+
     public init(title: String, config: NSDictionary?, preview: Bool = false) {
         if config != nil {
             var configuration = config!
@@ -74,12 +81,10 @@ public class MemoryWidget: WidgetWrapper {
         let freeY: CGFloat = !self.orderReversedState ? rowHeight+1 : 1
         let usedY: CGFloat = !self.orderReversedState ? 1 : rowHeight+1
         
-        let style = NSMutableParagraphStyle()
-        style.alignment = .right
         var attributes = [
-            NSAttributedString.Key.font: NSFont.systemFont(ofSize: 9, weight: .light),
+            NSAttributedString.Key.font: MemoryWidget.font,
             NSAttributedString.Key.foregroundColor: NSColor.textColor,
-            NSAttributedString.Key.paragraphStyle: style
+            NSAttributedString.Key.paragraphStyle: MemoryWidget.rightAlignStyle
         ]
         
         if self.symbolsState {

@@ -31,9 +31,13 @@ public class SystemStats {
     static public var brokerHost = URL(string: "wss://broker.system-stats.com:8084/mqtt")!
     static public var appHost = URL(string: "https://app.system-stats.com")!
     
+    // Cached in memory and updated through the setters; `send()` reads `monitoring`
+    // from every reader callback each tick, so avoid a UserDefaults lookup per call.
+    private var _monitoring: Bool = Store.shared.bool(key: "remote_monitoring", defaultValue: false)
     public var monitoring: Bool {
-        get { Store.shared.bool(key: "remote_monitoring", defaultValue: false) }
+        get { self._monitoring }
         set {
+            self._monitoring = newValue
             Store.shared.set(key: "remote_monitoring", value: newValue)
             if newValue {
                 self.start()
@@ -43,9 +47,11 @@ public class SystemStats {
             }
         }
     }
+    private var _control: Bool = Store.shared.bool(key: "remote_control", defaultValue: false)
     public var control: Bool {
-        get { Store.shared.bool(key: "remote_control", defaultValue: false) }
+        get { self._control }
         set {
+            self._control = newValue
             Store.shared.set(key: "remote_control", value: newValue)
             if newValue {
                 self.start()
@@ -55,9 +61,11 @@ public class SystemStats {
             }
         }
     }
+    private var _update: Bool = Store.shared.bool(key: "remote_update", defaultValue: false)
     public var update: Bool {
-        get { Store.shared.bool(key: "remote_update", defaultValue: false) }
+        get { self._update }
         set {
+            self._update = newValue
             Store.shared.set(key: "remote_update", value: newValue)
             if newValue {
                 self.start()

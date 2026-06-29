@@ -125,6 +125,19 @@ public struct KeyValue_t: KeyValue_p, Codable {
     }
 }
 
+private let memoryFormatterLock = NSLock()
+private var memoryFormatters: [Int: ByteCountFormatter] = [:]
+
+private let speedFormatterLock = NSLock()
+private let speedFormatter: NumberFormatter = {
+    let f = NumberFormatter()
+    f.numberStyle = .decimal
+    f.decimalSeparator = "."
+    f.usesGroupingSeparator = false
+    f.minimumFractionDigits = 0
+    return f
+}()
+
 public struct Units {
     public let bytes: Int64
     
@@ -178,16 +191,23 @@ public struct Units {
     }
     
     public func getReadableMemory(style: ByteCountFormatter.CountStyle = .file) -> String {
-        let formatter: ByteCountFormatter = ByteCountFormatter()
-        formatter.countStyle = style
-        formatter.includesUnit = true
-        formatter.isAdaptive = true
-        
+        memoryFormatterLock.lock()
+        let formatter: ByteCountFormatter
+        if let cached = memoryFormatters[style.rawValue] {
+            formatter = cached
+        } else {
+            formatter = ByteCountFormatter()
+            formatter.countStyle = style
+            formatter.includesUnit = true
+            formatter.isAdaptive = true
+            memoryFormatters[style.rawValue] = formatter
+        }
         var value = formatter.string(fromByteCount: Int64(self.bytes))
+        memoryFormatterLock.unlock()
         if let idx = value.lastIndex(of: ",") {
             value.replaceSubrange(idx...idx, with: ".")
         }
-        
+
         return value
     }
     
@@ -202,24 +222,21 @@ public struct Units {
     }
     
     private func formatSpeedValue(_ value: Double) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        formatter.decimalSeparator = "."
-        formatter.usesGroupingSeparator = false
-        formatter.minimumFractionDigits = 0
-        
+        speedFormatterLock.lock()
+        defer { speedFormatterLock.unlock() }
+
         switch value {
         case 0:
-            formatter.maximumFractionDigits = 0
+            speedFormatter.maximumFractionDigits = 0
         case ..<10:
-            formatter.maximumFractionDigits = 2
+            speedFormatter.maximumFractionDigits = 2
         case ..<100:
-            formatter.maximumFractionDigits = 1
+            speedFormatter.maximumFractionDigits = 1
         default:
-            formatter.maximumFractionDigits = 0
+            speedFormatter.maximumFractionDigits = 0
         }
-        
-        return formatter.string(from: NSNumber(value: value)) ?? String(format: "%.2f", value)
+
+        return speedFormatter.string(from: NSNumber(value: value)) ?? String(format: "%.2f", value)
     }
 }
 
@@ -913,13 +930,17 @@ public func localizedString(_ key: String, _ params: String..., comment: String 
     return string
 }
 
+// The system temperature unit is derived from the OS locale and does not change
+// at runtime, so compute it once instead of allocating a MeasurementFormatter per call.
+private let cachedSystemTemperatureUnit: UnitTemperature = {
+    let measureFormatter = MeasurementFormatter()
+    let measurement = Measurement(value: 0, unit: UnitTemperature.celsius)
+    return measureFormatter.string(from: measurement).hasSuffix("C") ? .celsius : .fahrenheit
+}()
+
 public extension UnitTemperature {
-    static var system: UnitTemperature {
-        let measureFormatter = MeasurementFormatter()
-        let measurement = Measurement(value: 0, unit: UnitTemperature.celsius)
-        return measureFormatter.string(from: measurement).hasSuffix("C") ? .celsius : .fahrenheit
-    }
-    
+    static var system: UnitTemperature { cachedSystemTemperatureUnit }
+
     static var current: UnitTemperature {
         let stringUnit: String = Store.shared.string(key: "temperature_units", defaultValue: "system")
         var unit = UnitTemperature.system
@@ -932,19 +953,27 @@ public extension UnitTemperature {
     }
 }
 
-public func temperature(_ value: Double, defaultUnit: UnitTemperature = UnitTemperature.celsius, fractionDigits: Int = 0) -> String {
+private let temperatureFormatterLock = NSLock()
+private let temperatureFormatter: MeasurementFormatter = {
     let formatter = MeasurementFormatter()
     formatter.locale = Locale.init(identifier: "en_US")
-    formatter.numberFormatter.maximumFractionDigits = fractionDigits
-    if fractionDigits != 0 {
-        formatter.numberFormatter.minimumFractionDigits = fractionDigits
-    }
     formatter.unitOptions = .providedUnit
-    
+    return formatter
+}()
+
+public func temperature(_ value: Double, defaultUnit: UnitTemperature = UnitTemperature.celsius, fractionDigits: Int = 0) -> String {
+    let current = UnitTemperature.current
+
+    temperatureFormatterLock.lock()
+    defer { temperatureFormatterLock.unlock() }
+
+    temperatureFormatter.numberFormatter.maximumFractionDigits = fractionDigits
+    temperatureFormatter.numberFormatter.minimumFractionDigits = fractionDigits != 0 ? fractionDigits : 0
+
     var measurement = Measurement(value: value, unit: defaultUnit)
-    measurement.convert(to: UnitTemperature.current)
-    
-    return formatter.string(from: measurement)
+    measurement.convert(to: current)
+
+    return temperatureFormatter.string(from: measurement)
 }
 
 public func sysctlByName(_ name: String) -> Int64 {
