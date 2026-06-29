@@ -57,6 +57,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     
     private var startTS: Date?
     private var launchStart: Date?
+
+    // Readers are paused while nothing is visible. Track both inputs and only resume
+    // when the display is on AND the screen is unlocked (a wake event can arrive while
+    // the lock screen is still up).
+    private var displayAsleep: Bool = false
+    private var screenLocked: Bool = false
     
     static func main() {
         let launchStart = Date()
@@ -84,6 +90,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         NotificationCenter.default.addObserver(self, selector: #selector(handleToggleSettings), name: .toggleSettings, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleRemoteAuthenticated), name: .remoteAuthenticated, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleRemoteUpdate), name: .remoteUpdate, object: nil)
+
+        // Pause polling while nothing is visible (display asleep / screen locked) to save energy.
+        let workspaceCenter = NSWorkspace.shared.notificationCenter
+        workspaceCenter.addObserver(self, selector: #selector(self.screensDidSleep), name: NSWorkspace.screensDidSleepNotification, object: nil)
+        workspaceCenter.addObserver(self, selector: #selector(self.screensDidWake), name: NSWorkspace.screensDidWakeNotification, object: nil)
+        let distributedCenter = DistributedNotificationCenter.default()
+        distributedCenter.addObserver(self, selector: #selector(self.screenDidLock), name: NSNotification.Name("com.apple.screenIsLocked"), object: nil)
+        distributedCenter.addObserver(self, selector: #selector(self.screenDidUnlock), name: NSNotification.Name("com.apple.screenIsUnlocked"), object: nil)
         
         NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
             self?.handleKeyEvent(event)
@@ -101,9 +115,34 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         modules.forEach{ $0.terminate() }
         SystemStats.shared.terminate()
     }
-    
+
     deinit {
         NotificationCenter.default.removeObserver(self)
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
+        DistributedNotificationCenter.default().removeObserver(self)
+    }
+
+    // MARK: - pause readers while nothing is visible
+
+    @objc private func screensDidSleep() {
+        self.displayAsleep = true
+        self.updateModulesSleep()
+    }
+    @objc private func screensDidWake() {
+        self.displayAsleep = false
+        self.updateModulesSleep()
+    }
+    @objc private func screenDidLock() {
+        self.screenLocked = true
+        self.updateModulesSleep()
+    }
+    @objc private func screenDidUnlock() {
+        self.screenLocked = false
+        self.updateModulesSleep()
+    }
+    private func updateModulesSleep() {
+        let shouldSleep = self.displayAsleep || self.screenLocked
+        modules.forEach { $0.setReadersSleep(shouldSleep) }
     }
     
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

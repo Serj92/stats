@@ -188,6 +188,14 @@ open class Module {
         self.enabled = false
         self.available = false
     }
+
+    // Pause/resume readers without changing the enabled state — used to stop polling
+    // while nothing is visible (display asleep / screen locked). No-op for disabled
+    // modules so their stopped readers are never accidentally started on resume.
+    public func setReadersSleep(_ state: Bool) {
+        guard self.enabled else { return }
+        self.readers.forEach { $0.sleepMode(state: state) }
+    }
     
     // terminate function which call before app termination
     public func terminate() {
