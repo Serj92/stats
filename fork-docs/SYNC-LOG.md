@@ -4,6 +4,40 @@
 
 ---
 
+## 2026-06-29 — проход по производительности (кэши, утечки, пауза-при-невидимости, старт)
+
+Не синк — локальная оптимизация по запросу «максимум скорости, минимум RAM». Сделана **после** катч-апа на v3.0.5 (запись ниже), тем же днём. 6 коммитов поверх вершины `local/build`. Цель — срезать посекундную работу readers и per-frame аллокации always-on виджетов, плюс перестать опрашивать, когда ничего не видно.
+
+**Метод.** Аудит трёх подсистем (readers / виджеты+charts / Kit-инфраструктура) + ручная проверка. Приоритезация по **реально включённым модулям** (вкл: CPU, Disk, GPU, Network, RAM; выкл: Bluetooth, Battery, Sensors, Clock). Ключевой вывод: фикс reader'а выключенного модуля даёт **ноль** локально — его таймер не тикает (`Module.mount()` под `guard self.enabled`, `disable()` зовёт `reader.stop()`). Поэтому Bluetooth `system_profiler`/`pmset`-каждую-секунду и Sensors/Battery-регекспы **сознательно НЕ трогали** — это кандидаты в upstream-PR, локальной пользы нет.
+
+**Коммиты (`local/build`, свежие снизу):**
+- `ca79a8e6` — кэши per-tick + per-frame виджеты + 2 утечки (14 файлов):
+  - SMC (`SMC/smc.swift`): кэш метаданных ключа (dataSize/dataType) под `NSLock` → −1 syscall (`readKeyInfo`) на каждое чтение значения. Локально полезно — SMC дёргают CPU и GPU.
+  - Sensors (`Modules/Sensors/readers.swift`): ~18 O(n)-поисков по ключу за тик → O(1)-карта `[String:Int]` (`rebuildSensorIndex` на смену списка + self-healing гард `sensorIndex(_:)`). Sensors off → upstream-ценность.
+  - Disk (`Modules/Disk/readers.swift`): `DASession` переиспользуется (был `DASessionCreate` каждый тик ×2 reader'а); SMART кэш 60с (частота чтения та же); `_list` процессов чистится до живых PID (утечка).
+  - SystemStats (`Kit/plugins/SystemStats.swift`): флаги monitoring/control/update кэшируются в памяти — нет чтения UserDefaults на каждый reader-callback.
+  - Clock (`Modules/Clock/main.swift`): `DateFormatter` кэш по (calendar,tz,format). Clock off → upstream.
+  - helpers (`Kit/helpers.swift`): `ByteCountFormatter` / `NumberFormatter` / `MeasurementFormatter` + system-temp-unit кэшируются (раньше — новый объект на каждый вызов). Локально: RAM/Net/Disk `getReadable*`.
+  - Reader base (`Kit/module/reader.swift`): `moduleKey` строится один раз (`lazy`, был `NSStringFromClass`+интерполяция каждый тик); две `DispatchQueue` с одинаковым label → один `NSLock`.
+  - Always-on виджеты: `NetworkChart` (single-pass max), `Speed` (`input/outputColor` из computed-замыканий → методы), `Memory` (static font/style), `Stack` (состояние раз на `draw`, не `queue.sync` на каждую ячейку).
+  - Утечки: event-monitor в `KeyboardShartcutView` снимается в `deinit` (`Kit/extensions.swift`); Disk `_list`; Net-обсерверы в `terminate()` (`Modules/Net/readers.swift`, там же reorder `VPNMode && vpnConnection` + reuse `wifiClient`).
+  - CPU (`Modules/CPU/readers.swift`): E/P/S-разбиение ядер предрасчитано в `setup()` (было 3× filter/тик); буферы через `removeAll(keepingCapacity:)`.
+- `886c9236` — пауза readers на **сон дисплея / блокировку экрана**.
+- `77bbbb91` — параллельный старт `SystemKit` (`Kit/plugins/SystemKit.swift`): 3 subprocess-зонда RAM/GPU/Disk через `DispatchGroup`, wall-clock = max, а не сумма; `getDisplayInfo` остаётся на потоке init (AppKit/NSScreen).
+- `86e83da1` — redraw-skip при неизменном значении (`Memory.setValue` + Pie/Tachometer/Gauge `setSegments`).
+- `9e97cb27` — пауза readers в **фуллскрине** (occlusion статус-окон).
+- `933ea04c` — polish popup-графиков (`Charts.swift`: кэш `NSGradient` в LineChartView, single-pass minMax, удалён мёртвый `list` в BarChartView, `list`-только-при-ховере в ColumnChartView).
+
+**Пауза-при-невидимости — поведенческое изменение, детали в [FEATURES.md](FEATURES.md) №4.** ⚠️ Главное на будущее: опрос **полностью встаёт**, когда меню-бар не виден (сон дисплея / блокировка / фуллскрин), и графики истории на это время **замирают** (пропуск точек, продолжают с того же места). Если когда-нибудь увидишь «пропуски в графиках после сна/фуллскрина» — это **НЕ баг, это фича**. Occlusion-сигнал (фуллскрин) — наименее детерминированный (зависит от версии macOS), fail-safe: не нашли `NSStatusBarWindow` → считаем видимым. На текущей macOS проверено вживую — паузит/оживляет корректно.
+
+**Новые локальные расхождения с upstream — пережить при следующем rebase.** Perf-дельты в: `SMC/smc.swift`, `Kit/helpers.swift`, `Kit/extensions.swift`, `Kit/module/reader.swift`, `Kit/module/module.swift`, `Kit/plugins/{SystemStats,SystemKit,Charts}.swift`, `Kit/Widgets/{Memory,NetworkChart,Speed,Stack}.swift`, `Modules/{CPU,Disk,Net,Sensors}/readers.swift`, `Modules/Clock/main.swift`, `Stats/AppDelegate.swift`. **Зона риска при синке** — `Charts.swift`, `Speed.swift`, `helpers.swift`, `SystemStats.swift` (апстрим их трогает); 3-way скорее всего сведёт, но проверять поведение.
+
+**Сборка/деплой.** Каждый батч — компиляция Debug без подписи (рецепт SIGNING.md), финал — Release под личным сертификатом, sanity-check зелёный (3 OU = `T5V6W6793A`), версия 3.0.5 (не бампали — отличие только в бинаре). `ditto` в `/Applications`, SHA-256 build == installed, в бинаре подтверждены `menuBarOcclusionChanged` и `SystemKit.probe`. Бэкап `/tmp/Stats-backup.app` обновлялся перед каждым деплоем. Всё запушено в `origin/local/build` (бэкап-форк, правило №1).
+
+**Что осталось (опционально).** Регекспы (`String.matches`/`findAndCrop` мимо `RegexCache`) — горячи лишь в popup-gated ридерах, локально почти ноль. Upstream-PR для off-модулей (Bluetooth `system_profiler`/`pmset` каждую секунду и пр.). На steady-state двигать практически нечего.
+
+---
+
 ## 2026-06-29 — v3.0.4 → v3.0.5 (катч-ап, «на всякий случай»)
 
 Мелкий патч-релиз. Поводом был не must-have, а гигиена — пока дельта мала, синк дёшев.
