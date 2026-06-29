@@ -75,6 +75,14 @@ codesign -dvvv "$REL/Contents/Library/LaunchServices/eu.exelban.Stats.SMC.Helper
 
 Все три OU = `T5V6W6793A` → датчики заработают. Различаются → Sensors сломается.
 
+### `get-task-allow` — это НЕ признак Debug
+
+В Release-сборке `codesign -d --entitlements -` всё равно покажет `com.apple.security.get-task-allow = 1`. Это **нормально** и **не** означает, что собрался Debug:
+
+- Entitlement инжектится при подписи **dev-сертификатом** «Apple Development» (любая конфигурация, хоть Debug, хоть Release). Убрать его можно только подписью **Distribution** (Developer ID) — которого у нас нет.
+- На RAM/работу не влияет — лишь разрешает присоединять отладчик.
+- Признак реального Release — другое: компиляция с `-O` (не `-Onone`), исключённые `#if DEBUG`-блоки и no-op `debug()` (см. [SYNC-LOG.md](SYNC-LOG.md) 2026-06-28). Не путать `get-task-allow` с конфигурацией сборки.
+
 ## Деплой в /Applications
 
 ```bash
