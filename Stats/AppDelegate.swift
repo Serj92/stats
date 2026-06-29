@@ -58,11 +58,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     private var startTS: Date?
     private var launchStart: Date?
 
-    // Readers are paused while nothing is visible. Track both inputs and only resume
-    // when the display is on AND the screen is unlocked (a wake event can arrive while
-    // the lock screen is still up).
+    // Readers are paused while nothing is visible. Track each input separately and only
+    // resume when the display is on, the screen is unlocked, and the menu bar is showing
+    // (a wake event can arrive while the lock screen is still up).
     private var displayAsleep: Bool = false
     private var screenLocked: Bool = false
+    private var menuBarHidden: Bool = false
     
     static func main() {
         let launchStart = Date()
@@ -98,6 +99,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         let distributedCenter = DistributedNotificationCenter.default()
         distributedCenter.addObserver(self, selector: #selector(self.screenDidLock), name: NSNotification.Name("com.apple.screenIsLocked"), object: nil)
         distributedCenter.addObserver(self, selector: #selector(self.screenDidUnlock), name: NSNotification.Name("com.apple.screenIsUnlocked"), object: nil)
+        // Fullscreen apps auto-hide the menu bar; our status-item windows then lose the
+        // .visible occlusion flag, so pause too when no menu-bar item is on screen.
+        NotificationCenter.default.addObserver(self, selector: #selector(self.menuBarOcclusionChanged), name: NSWindow.didChangeOcclusionStateNotification, object: nil)
         
         NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
             self?.handleKeyEvent(event)
@@ -140,8 +144,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         self.screenLocked = false
         self.updateModulesSleep()
     }
+    @objc private func menuBarOcclusionChanged() {
+        // Re-evaluate from our own status-item windows. Fail safe: if none are found,
+        // treat the menu bar as visible so widgets never freeze when we cannot tell.
+        let statusWindows = NSApp.windows.filter { $0.className == "NSStatusBarWindow" }
+        self.menuBarHidden = !statusWindows.isEmpty && !statusWindows.contains { $0.occlusionState.contains(.visible) }
+        self.updateModulesSleep()
+    }
     private func updateModulesSleep() {
-        let shouldSleep = self.displayAsleep || self.screenLocked
+        let shouldSleep = self.displayAsleep || self.screenLocked || self.menuBarHidden
         modules.forEach { $0.setReadersSleep(shouldSleep) }
     }
     
