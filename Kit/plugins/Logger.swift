@@ -168,8 +168,13 @@ extension NextLog {
     }
 }
 
-public func debug(_ message: String, log: NextLog = NextLog.shared, file: String = #file, line: UInt = #line) {
-    log.log(level: .debug, message: message, file: file, line: line)
+public func debug(_ message: @autoclosure () -> String, log: NextLog = NextLog.shared, file: String = #file, line: UInt = #line) {
+    // Fork: debug logging is stripped from Release. `@autoclosure` keeps the
+    // message expression from being evaluated at all when DEBUG is off, so the
+    // 60 debug() call sites cost zero allocations/CPU in the shipped build.
+    #if DEBUG
+    log.log(level: .debug, message: message(), file: file, line: line)
+    #endif
 }
 
 public func info(_ message: String, log: NextLog = NextLog.shared, file: String = #file, line: UInt = #line) {
