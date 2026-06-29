@@ -249,9 +249,25 @@ public class SystemKit {
         self.device.os = os_s(name: osDict[version] ?? localizedString("Unknown"), version: systemVersion, build: build)
         
         (self.device.info.cpu, self.device.platform) = self.getCPUInfo()
-        self.device.info.ram = self.getRamInfo()
-        self.device.info.gpu = self.getGPUInfo()
-        self.device.info.disk = self.getDiskInfo()
+
+        // RAM/GPU/Disk probes each shell out to system_profiler/diskutil and are
+        // independent, so run them concurrently: launch waits for the slowest probe
+        // instead of the sum. Each closure writes its own local; results are collected
+        // after the barrier, so there is no shared-state mutation during the fan-out.
+        let group = DispatchGroup()
+        let probeQueue = DispatchQueue(label: "eu.exelban.SystemKit.probe", attributes: .concurrent)
+        var ram: ram_s?
+        var gpu: [gpu_s]?
+        var disk: [disk_s]?
+        probeQueue.async(group: group) { ram = self.getRamInfo() }
+        probeQueue.async(group: group) { gpu = self.getGPUInfo() }
+        probeQueue.async(group: group) { disk = self.getDiskInfo() }
+        group.wait()
+        self.device.info.ram = ram
+        self.device.info.gpu = gpu
+        self.device.info.disk = disk
+
+        // NSScreen/CoreGraphics — keep on the init thread (AppKit), and it is cheap anyway.
         self.device.display = self.getDisplayInfo()
     }
     
