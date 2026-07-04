@@ -1136,7 +1136,7 @@ public class SMCHelper {
     public func checkForUpdate() {
         if #available(macOS 13, *) {
             self.cleanupLegacyInstall()
-            return
+            guard SMAppService.daemon(plistName: self.plistName).status == .enabled else { return }
         }
         
         let helperURL = Bundle.main.bundleURL.appendingPathComponent("Contents/Library/LaunchServices/eu.exelban.Stats.SMC.Helper")
@@ -1146,7 +1146,7 @@ public class SMCHelper {
         
         helper.version { installedHelperVersion in
             guard installedHelperVersion != helperVersion else { return }
-            print("new version of SMC helper is detected, going to update...")
+            print("new version of SMC helper is detected (\(installedHelperVersion) -> \(helperVersion)), going to update...")
             self.uninstall(silent: true)
             self.install { state in
                 if case .enabled = state {
