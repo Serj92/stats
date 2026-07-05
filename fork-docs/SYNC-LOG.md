@@ -31,7 +31,11 @@
 
 **Сборка.** Release под личным сертификатом (рецепт SIGNING.md, инкрементально поверх существующего `build/`) → **`** BUILD SUCCEEDED **`**, ошибок нет (единственный варнинг — «SwiftLint not installed», безобидный).
 
-**Деплой (2026-07-05).** `ditto` в `/Applications` по рецепту SIGNING.md, бэкап `810` → `/tmp/Stats-backup.app`. Проверено: SHA-256 бинаря build == installed, `CFBundleVersion` 810 → **813**, `TeamIdentifier = T5V6W6793A`, `codesign --verify --deep --strict` зелёный, приложение поднялось из `/Applications/Stats.app`. Управление кулерами не трогали → админ-пароль на переустановку SMC-хелпера не запрашивался (checkForUpdate под `guard status == .enabled` вышел рано). Всё запушено в `origin/local/build` (бэкап-форк).
+**Деплой (2026-07-05).** `ditto` в `/Applications` по рецепту SIGNING.md, бэкап `810` (v3.0.5) → `/tmp/Stats-backup.app`. Проверено: SHA-256 бинаря build == installed, `CFBundleVersion` 810 → **813**, `TeamIdentifier = T5V6W6793A`, `codesign --verify --deep --strict` зелёный, приложение поднялось из `/Applications/Stats.app`. Управление кулерами не трогали → админ-пароль на переустановку SMC-хелпера не запрашивался (checkForUpdate под `guard status == .enabled` вышел рано).
+
+**Бамп версии + редеплой (2026-07-05).** Первый деплой оставил `MARKETING_VERSION = 3.0.5` (мы пропустили бамп-коммит `f2654977`), из-за чего в настройках показывалось «3.0.5», хотя контент уже v3.0.6 → путаница. Подняли `MARKETING_VERSION` в двух местах `project.pbxproj` (Debug+Release главного таргета) `3.0.5 → 3.0.6` (те же 2 строки, что и в `f2654977`), пересобрали Release, передеплоили. Теперь в настройках честно **3.0.6 (build 813)**; подпись/SHA/verify перепроверены зелёными. **Урок на будущее:** при синке ярлык версии живёт в `MARKETING_VERSION` (`project.pbxproj`), а не в Info.plist (`$(MARKETING_VERSION)`) — если берём контент релиза, но пропускаем его бамп-коммит, версию надо поднять руками, иначе UI врёт. Точка отката осталась `810`/v3.0.5.
+
+Всё запушено в `origin/local/build` (бэкап-форк).
 
 ---
 
