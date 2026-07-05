@@ -29,7 +29,9 @@
 
 **i18n.** Ни один `Localizable.strings` в 7 взятых коммитах не затронут (весь i18n-груз был в пропущенном Preset-мастере) → добора EN/RU/UK не требуется.
 
-**Сборка.** Release под личным сертификатом (рецепт SIGNING.md, инкрементально поверх существующего `build/`) → **`** BUILD SUCCEEDED **`**, ошибок нет (единственный варнинг — «SwiftLint not installed», безобидный). Деплой в `/Applications` пользователь делает вручную по своему воркфлоу. Коммиты пока **только локально** на `local/build` (в origin не пушены).
+**Сборка.** Release под личным сертификатом (рецепт SIGNING.md, инкрементально поверх существующего `build/`) → **`** BUILD SUCCEEDED **`**, ошибок нет (единственный варнинг — «SwiftLint not installed», безобидный).
+
+**Деплой (2026-07-05).** `ditto` в `/Applications` по рецепту SIGNING.md, бэкап `810` → `/tmp/Stats-backup.app`. Проверено: SHA-256 бинаря build == installed, `CFBundleVersion` 810 → **813**, `TeamIdentifier = T5V6W6793A`, `codesign --verify --deep --strict` зелёный, приложение поднялось из `/Applications/Stats.app`. Управление кулерами не трогали → админ-пароль на переустановку SMC-хелпера не запрашивался (checkForUpdate под `guard status == .enabled` вышел рано). Всё запушено в `origin/local/build` (бэкап-форк).
 
 ---
 
