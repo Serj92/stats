@@ -43,7 +43,7 @@ public class Portal: PortalWrapper {
     private var pCoresColorState: SColor = .indigo
     private var pCoresColor: NSColor { self.pCoresColorState.additional as? NSColor ?? NSColor.systemBlue }
     private var sCoresColorState: SColor = .orange
-    private var sCoresColor: NSColor { self.eCoresColorState.additional as? NSColor ?? NSColor.systemOrange }
+    private var sCoresColor: NSColor { self.sCoresColorState.additional as? NSColor ?? NSColor.systemOrange }
     // core topology is fixed at runtime; cache id -> type once to avoid an O(cores²) lookup per tick
     private lazy var coreTypeByID: [Int: coreType] = {
         var map: [Int: coreType] = [:]
