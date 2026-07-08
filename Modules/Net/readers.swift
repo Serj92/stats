@@ -219,7 +219,13 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate {
         self.checkUsageReset()
         self.requestDetails()
         
-        let current: Bandwidth = self.reader == "interface" ? self.readInterfaceBandwidth() : self.readProcessBandwidth()
+        let current: Bandwidth
+        if self.reader == "interface" {
+            current = self.readInterfaceBandwidth()
+        } else {
+            self.readInterfaceStatus()
+            current = self.readProcessBandwidth()
+        }
         
         // allows to reset the value to 0 when first read
         if self.usage.bandwidth.upload != 0 {
@@ -261,71 +267,68 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate {
     
     private func readInterfaceBandwidth() -> Bandwidth {
         var interfaceAddresses: UnsafeMutablePointer<ifaddrs>? = nil
-        var totalUpload: Int64 = 0
-        var totalDownload: Int64 = 0
         guard getifaddrs(&interfaceAddresses) == 0 else {
             return Bandwidth()
         }
-
-        // resolved once per tick: interfaceID can hit configd, CWInterface is an IPC to airportd;
-        // the loop visits one ifaddrs entry per address family
-        let interfaceID = self.interfaceID
-        let wifiInterface = self.wifiClient.interface(withName: interfaceID)
-        var status: Bool? = nil
-        var transmitRate: Double? = nil
-        var laddr4: String? = nil
-        var laddr6: String? = nil
 
         var pointer = interfaceAddresses
         while pointer != nil {
             defer { pointer = pointer?.pointee.ifa_next }
             guard let pointer = pointer else { break }
 
-            if String(cString: pointer.pointee.ifa_name) != interfaceID {
+            if String(cString: pointer.pointee.ifa_name) != self.interfaceID {
                 continue
             }
-            status = (pointer.pointee.ifa_flags & UInt32(IFF_UP)) != 0
-
-            if let wifiInterface {
-                transmitRate = wifiInterface.transmitRate()
-            } else if let raw = pointer.pointee.ifa_data {
-                let dataPtr = raw.assumingMemoryBound(to: if_data.self)
-                let ifData = dataPtr.pointee
-                let baud = UInt64(ifData.ifi_baudrate)
-                if baud > 0 {
-                    transmitRate = Double(baud) / 1_000_000.0
-                }
-            }
-
-            if let ip = self.getLocalIP(pointer) {
-                if ip.family == UInt8(AF_INET) {
-                    laddr4 = ip.value
-                } else {
-                    laddr6 = ip.value
-                }
-            }
-
-            if let info = self.getBytesInfo(pointer) {
-                totalUpload += info.upload
-                totalDownload += info.download
-            }
+            self.updateInterfaceInfo(pointer)
         }
         freeifaddrs(interfaceAddresses)
-
-        // single get-modify-set on the synchronized property instead of one per field per entry
-        var usage = self.usage
-        if let status { usage.interface?.status = status }
-        if let transmitRate { usage.interface?.transmitRate = transmitRate }
-        if let laddr4 { usage.laddr.v4 = laddr4 }
-        if let laddr6 { usage.laddr.v6 = laddr6 }
-        self.usage = usage
-
-        return Bandwidth(upload: totalUpload, download: totalDownload)
+        
+        return self.getBytesInfo() ?? Bandwidth()
+    }
+    
+    private func readInterfaceStatus() {
+        var interfaceAddresses: UnsafeMutablePointer<ifaddrs>? = nil
+        guard getifaddrs(&interfaceAddresses) == 0 else { return }
+        
+        var pointer = interfaceAddresses
+        while pointer != nil {
+            defer { pointer = pointer?.pointee.ifa_next }
+            guard let pointer = pointer else { break }
+            
+            if String(cString: pointer.pointee.ifa_name) != self.interfaceID {
+                continue
+            }
+            self.updateInterfaceInfo(pointer)
+        }
+        freeifaddrs(interfaceAddresses)
+    }
+    
+    private func updateInterfaceInfo(_ pointer: UnsafeMutablePointer<ifaddrs>) {
+        self.usage.interface?.status = (pointer.pointee.ifa_flags & UInt32(IFF_UP)) != 0
+        
+        if let wifiInterface = CWWiFiClient.shared().interface(withName: self.interfaceID) {
+            self.usage.interface?.transmitRate = wifiInterface.transmitRate()
+        } else if let raw = pointer.pointee.ifa_data {
+            let dataPtr = raw.assumingMemoryBound(to: if_data.self)
+            let ifData = dataPtr.pointee
+            let baud = UInt64(ifData.ifi_baudrate)
+            if baud > 0 {
+                self.usage.interface?.transmitRate = Double(baud) / 1_000_000.0
+            }
+        }
+        
+        if let ip = self.getLocalIP(pointer) {
+            if ip.family == UInt8(AF_INET) {
+                self.usage.laddr.v4 = ip.value
+            } else {
+                self.usage.laddr.v6 = ip.value
+            }
+        }
     }
     
     private func readProcessBandwidth() -> Bandwidth {
         let task = Process()
-        task.launchPath = "/usr/bin/nettop"
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/nettop")
         task.arguments = ["-P", "-L", "1", "-n", "-k", "time,interface,state,rx_dupe,rx_ooo,re-tx,rtt_avg,rcvsize,tx_win,tc_class,tc_mgt,cc_algo,P,C,R,W,arch"]
         task.environment = [
             "NSUnbufferedIO": "YES",
@@ -440,6 +443,10 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate {
         
         guard self.usage.interface != nil else { return }
         
+        if self.usage.connectionType != .wifi {
+            self.usage.wifiDetails.reset()
+        }
+        
         if self.usage.wifiDetails.ssid != nil && (self.usage.wifiDetails.ssid == "" || self.usage.wifiDetails.ssid == "<redacted>") {
             self.usage.wifiDetails.ssid = nil
         }
@@ -510,7 +517,7 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate {
     
     private func systemProfilerAirport(timeout: TimeInterval) -> String? {
         let task = Process()
-        task.launchPath = "/usr/sbin/system_profiler"
+        task.executableURL = URL(fileURLWithPath: "/usr/sbin/system_profiler")
         task.arguments = ["SPAirPortDataType", "-json"]
         
         let outputPipe = Pipe()
@@ -610,13 +617,41 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate {
         return data.isEmpty ? nil : data
     }
     
-    private func getBytesInfo(_ pointer: UnsafeMutablePointer<ifaddrs>) -> (upload: Int64, download: Int64)? {
-        guard let addrPtr = pointer.pointee.ifa_addr, addrPtr.pointee.sa_family == UInt8(AF_LINK) else {
-            return nil
+    private func getBytesInfo() -> Bandwidth? {
+        let index = if_nametoindex(self.interfaceID)
+        guard index != 0 else { return nil }
+        
+        var mib: [Int32] = [CTL_NET, PF_ROUTE, 0, 0, NET_RT_IFLIST2, Int32(index)]
+        var size: size_t = 0
+        guard sysctl(&mib, u_int(mib.count), nil, &size, nil, 0) == 0, size > 0 else { return nil }
+        var buffer = [UInt8](repeating: 0, count: size)
+        guard sysctl(&mib, u_int(mib.count), &buffer, &size, nil, 0) == 0 else { return nil }
+        
+        var offset = 0
+        while offset + MemoryLayout<if_msghdr>.size <= size {
+            var header = if_msghdr()
+            buffer.withUnsafeBytes { src in
+                _ = memcpy(&header, src.baseAddress?.advanced(by: offset), MemoryLayout<if_msghdr>.size)
+            }
+            guard header.ifm_msglen > 0 else { return nil }
+            
+            if Int32(header.ifm_type) == RTM_IFINFO2, offset + MemoryLayout<if_msghdr2>.size <= size {
+                var header2 = if_msghdr2()
+                buffer.withUnsafeBytes { src in
+                    _ = memcpy(&header2, src.baseAddress?.advanced(by: offset), MemoryLayout<if_msghdr2>.size)
+                }
+                if UInt32(header2.ifm_index) == index {
+                    return Bandwidth(
+                        upload: Int64(clamping: header2.ifm_data.ifi_obytes),
+                        download: Int64(clamping: header2.ifm_data.ifi_ibytes)
+                    )
+                }
+            }
+            
+            offset += Int(header.ifm_msglen)
         }
-        guard let raw = pointer.pointee.ifa_data else { return nil }
-        let data = raw.assumingMemoryBound(to: if_data.self)
-        return (upload: Int64(data.pointee.ifi_obytes), download: Int64(data.pointee.ifi_ibytes))
+        
+        return nil
     }
     
     private func isIPv4(_ ip: String) -> Bool {
@@ -712,7 +747,7 @@ public class ProcessReader: Reader<[Network_Process]> {
         }
         
         let task = Process()
-        task.launchPath = "/usr/bin/nettop"
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/nettop")
         task.arguments = ["-P", "-L", "1", "-n", "-k", "time,interface,state,rx_dupe,rx_ooo,re-tx,rtt_avg,rcvsize,tx_win,tc_class,tc_mgt,cc_algo,P,C,R,W,arch"]
         task.environment = [
             "NSUnbufferedIO": "YES",

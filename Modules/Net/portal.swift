@@ -14,6 +14,7 @@ import Kit
 
 public class Portal: PortalWrapper {
     private var chart: NetworkChartView? = nil
+    private var initialized: Bool = false
     
     private var publicIPField: NSTextField? = nil
     private var publicIPView: NSView? = nil
@@ -119,10 +120,11 @@ public class Portal: PortalWrapper {
     
     public func usageCallback(_ value: Network_Usage) {
         DispatchQueue.main.async(execute: {
-            if let chart = self.chart {
-                chart.addValue(upload: Double(value.bandwidth.upload), download: Double(value.bandwidth.download))
-            }
+            self.chart?.addValue(upload: Double(value.bandwidth.upload), download: Double(value.bandwidth.download))
             
+            guard (self.window?.isVisible ?? false) || !self.initialized else { return }
+            self.initialized = true
+
             if self.publicIPState, let view = self.publicIPView, view.isHidden {
                 self.publicIPView?.isHidden = false
                 self.localIPView?.isHidden = true
