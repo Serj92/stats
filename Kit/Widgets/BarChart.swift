@@ -92,7 +92,7 @@ public class BarChart: WidgetWrapper {
             }
             self.setFrameSize(NSSize(width: 36, height: self.frame.size.height))
             self.invalidateIntrinsicContentSize()
-            self.display()
+            self.needsDisplay = true
         }
         
         let style = NSMutableParagraphStyle()

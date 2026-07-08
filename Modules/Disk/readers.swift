@@ -189,16 +189,19 @@ internal class CapacityReader: Reader<Disks> {
 
     private func readSMARTDetails(for BSDName: String) -> smart_t? {
         var disk = IOServiceGetMatchingService(kIOMainPortDefault, IOBSDNameMatching(kIOMainPortDefault, 0, BSDName.cString(using: .utf8)))
-        guard disk != kIOReturnSuccess else { return nil }
-        defer { IOObjectRelease(disk) }
-        
-        var parent = disk
+        guard disk != 0 else { return nil }
+
+        // walk up to the block-storage device, releasing each child handle before moving to its
+        // parent — IORegistryEntryGetParentEntry returns a +1 retained handle each iteration
         while IOObjectConformsTo(disk, kIOBlockStorageDeviceClass) == 0 {
+            var parent: io_registry_entry_t = 0
             let error = IORegistryEntryGetParentEntry(disk, kIOServicePlane, &parent)
-            if error != kIOReturnSuccess || parent == kIOReturnSuccess { return nil }
+            IOObjectRelease(disk)
+            guard error == kIOReturnSuccess, parent != 0 else { return nil }
             disk = parent
         }
-        
+        defer { IOObjectRelease(disk) }
+
         guard IOObjectConformsTo(disk, kIOBlockStorageDeviceClass) > 0 else { return nil }
         
         if let smart = self.getNVMeSMART(for: disk) { return smart }
@@ -466,27 +469,24 @@ internal class ActivityReader: Reader<Disks> {
     }
     
     private func driveStats(_ idx: Int, _ d: drive) {
-        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOBSDNameMatching(kIOMainPortDefault, 0, d.BSDName))
-        if service == 0 { return }
-        IOObjectRelease(service)
-        
-        guard let props = getIOProperties(d.parent) else { return }
-        
-        if let statistics = props.object(forKey: "Statistics") as? NSDictionary {
-            let readBytes = statistics.object(forKey: "Bytes (Read)") as? Int64 ?? 0
-            let writeBytes = statistics.object(forKey: "Bytes (Write)") as? Int64 ?? 0
-            
-            if d.activity.readBytes != 0 {
-                self.list.updateRead(idx, newValue: readBytes - d.activity.readBytes)
-            }
-            if d.activity.writeBytes != 0 {
-                self.list.updateWrite(idx, newValue: writeBytes - d.activity.writeBytes)
-            }
-            
-            self.list.updateReadWrite(idx, read: readBytes, write: writeBytes)
+        // d.BSDName was just re-enumerated as active this tick, so the drive exists — skip the
+        // redundant IOServiceGetMatchingService existence probe. Read only the Statistics
+        // property instead of serializing the whole parent property table each tick.
+        guard let statistics = IORegistryEntryCreateCFProperty(d.parent, "Statistics" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? NSDictionary else {
+            return
         }
-        
-        return
+
+        let readBytes = statistics.object(forKey: "Bytes (Read)") as? Int64 ?? 0
+        let writeBytes = statistics.object(forKey: "Bytes (Write)") as? Int64 ?? 0
+
+        if d.activity.readBytes != 0 {
+            self.list.updateRead(idx, newValue: readBytes - d.activity.readBytes)
+        }
+        if d.activity.writeBytes != 0 {
+            self.list.updateWrite(idx, newValue: writeBytes - d.activity.writeBytes)
+        }
+
+        self.list.updateReadWrite(idx, read: readBytes, write: writeBytes)
     }
 }
 
@@ -560,26 +560,35 @@ private func driveDetails(_ disk: DADisk, removableState: Bool) -> drive? {
     }
     
     let partitionLevel = d.BSDName.filter { "0"..."9" ~= $0 }.count
-    if let parent = getDeviceIOParent(DADiskCopyIOMedia(disk), level: Int(partitionLevel)) {
-        d.parent = parent
+    let media = DADiskCopyIOMedia(disk) // io_service_t (0 on failure), +1 retained
+    if media != 0 {
+        if let parent = getDeviceIOParent(media, level: Int(partitionLevel)) {
+            d.parent = parent
+        }
+        IOObjectRelease(media) // getDeviceIOParent only reads it, so release here
     }
-    
+
     return d
 }
 
 // https://opensource.apple.com/source/bless/bless-152/libbless/APFS/BLAPFSUtilities.c.auto.html
 public func getDeviceIOParent(_ obj: io_registry_entry_t, level: Int) -> io_registry_entry_t? {
     var parent: io_registry_entry_t = 0
-    
+
     if IORegistryEntryGetParentEntry(obj, kIOServicePlane, &parent) != KERN_SUCCESS {
         return nil
     }
-    
-    for _ in 1...level where IORegistryEntryGetParentEntry(parent, kIOServicePlane, &parent) != KERN_SUCCESS {
-        IOObjectRelease(parent)
-        return nil
+
+    for _ in 1...level {
+        var next: io_registry_entry_t = 0
+        if IORegistryEntryGetParentEntry(parent, kIOServicePlane, &next) != KERN_SUCCESS {
+            IOObjectRelease(parent)
+            return nil
+        }
+        IOObjectRelease(parent) // release the intermediate before stepping up
+        parent = next
     }
-    
+
     return parent
 }
 

@@ -308,6 +308,8 @@ public extension Notification.Name {
     static let clickInSettings = Notification.Name("clickInSettings")
     static let refreshPublicIP = Notification.Name("refreshPublicIP")
     static let resetTotalNetworkUsage = Notification.Name("resetTotalNetworkUsage")
+    static let networkChartSettings = Notification.Name("networkChartSettings")
+    static let keyboardShortcutChanged = Notification.Name("keyboardShortcutChanged")
     static let syncFansControl = Notification.Name("syncFansControl")
     static let checkFanModes = Notification.Name("checkFanModes")
     static let fanHelperState = Notification.Name("fanHelperState")

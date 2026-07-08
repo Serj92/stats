@@ -197,6 +197,7 @@ public class LineChartView: ChartView {
     
     private var points: [DoubleValue?]
     private var head: Int = 0
+    private var lastPointTs: Date? // ts of the most recently inserted point; O(1) gap check in addValue
     private var shadowPoints: [DoubleValue?] = []
     private var transparent: Bool = true
     private var flipY: Bool = false
@@ -562,10 +563,14 @@ public class LineChartView: ChartView {
         self.write {
             let n = self.points.count
             guard n > 0 else { return }
-            
-            if let stats = self.intervalStatsLocked() {
+
+            // O(1) gap check: only when >= 2s elapsed since the last point (i.e. samples were
+            // missed, e.g. after sleep) do we pay for the O(n) median-interval computation used
+            // to size the gap. In the steady 1s cadence this branch never runs.
+            if let lastTs = self.lastPointTs, value.ts.timeIntervalSince(lastTs) >= 2.0,
+               let stats = self.intervalStatsLocked() {
                 let gap = value.ts.timeIntervalSince(stats.lastTs)
-                if gap >= 2.0, gap > stats.typical * 1.5 {
+                if gap > stats.typical * 1.5 {
                     let missing = min(Int((gap / stats.typical).rounded()) - 1, n - 1)
                     for _ in 0..<max(0, missing) {
                         self.points[self.head] = nil
@@ -573,9 +578,10 @@ public class LineChartView: ChartView {
                     }
                 }
             }
-            
+
             self.points[self.head] = value
             self.head = (self.head + 1) % n
+            self.lastPointTs = value.ts
         }
         self.onMain { [weak self] in
             guard let self, self.window?.isVisible ?? false else { return }
@@ -666,6 +672,7 @@ public class LineChartView: ChartView {
         self.write {
             self.points = newPoints.map { Optional($0) }
             self.head = 0
+            self.lastPointTs = newPoints.last?.ts
         }
         self.onMain { [weak self] in
             self?.layer?.removeAnimation(forKey: "slide")
@@ -1249,6 +1256,16 @@ public class GaugeChartView: ChartView {
 public class ColumnChartView: ChartView {
     private var values: [ColorValue] = []
     private var cursor: CGPoint? = nil
+    // gradients keyed by fill color (the few fixed core-type colors) so we don't allocate one
+    // NSGradient per bar per frame
+    private var gradientCache: [NSColor: NSGradient] = [:]
+
+    private func gradient(for color: NSColor) -> NSGradient? {
+        if let cached = self.gradientCache[color] { return cached }
+        let g = NSGradient(colors: [color.withAlphaComponent(0.5), color.withAlphaComponent(1.0)])
+        if let g { self.gradientCache[color] = g }
+        return g
+    }
     
     public init(frame: NSRect = NSRect.zero, num: Int, animation: Bool = true) {
         super.init(frame: frame, queueLabel: "eu.exelban.Stats.Charts.Column")
@@ -1307,10 +1324,7 @@ public class ColumnChartView: ChartView {
                     roundedRect: NSRect(x: x, y: 0, width: partitionSize.width, height: h),
                     xRadius: radius, yRadius: radius
                 )
-                if let gradient = NSGradient(colors: [
-                    color.withAlphaComponent(0.5),
-                    color.withAlphaComponent(1.0)
-                ]) {
+                if let gradient = self.gradient(for: color) {
                     gradient.draw(in: fill, angle: 90)
                 } else {
                     color.setFill()
@@ -1344,21 +1358,21 @@ public class ColumnChartView: ChartView {
     
     public override func mouseEntered(with event: NSEvent) {
         self.cursor = convert(event.locationInWindow, from: nil)
-        self.display()
+        self.needsDisplay = true
     }
     public override func mouseMoved(with event: NSEvent) {
         self.cursor = convert(event.locationInWindow, from: nil)
-        self.display()
+        self.needsDisplay = true
     }
     public override func mouseDragged(with event: NSEvent) {
         self.cursor = convert(event.locationInWindow, from: nil)
-        self.display()
+        self.needsDisplay = true
     }
     public override func mouseExited(with event: NSEvent) {
         self.cursor = nil
-        self.display()
+        self.needsDisplay = true
     }
-    
+
     public override func updateTrackingAreas() {
         self.trackingAreas.forEach({ self.removeTrackingArea($0) })
         self.addTrackingArea(NSTrackingArea(

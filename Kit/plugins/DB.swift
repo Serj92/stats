@@ -17,17 +17,26 @@ public class DB {
     private var lldb: LLDB? = nil
     private let queue = DispatchQueue(label: "eu.exelban.db")
     private let ttl: Int = 60*60
-    
-    public var _writeTS: [String: Date] = [:]
-    public var writeTS: [String: Date] {
-        get { self.queue.sync { self._writeTS } }
-        set { self.queue.sync { self._writeTS = newValue } }
-    }
-    
+
+    private static let encoder = JSONEncoder()
+    private static let decoder = JSONDecoder()
+
+    // in-place, single-sync accessors: assigning through a computed [String: Codable] property
+    // forced a full dictionary COW copy plus two queue.sync hops on every insert
+    private var _writeTS: [String: Date] = [:]
     private var _values: [String: Codable] = [:]
-    public var values: [String: Codable] {
-        get { self.queue.sync { self._values } }
-        set { self.queue.sync { self._values = newValue } }
+
+    private func value(for key: String) -> Codable? {
+        self.queue.sync { self._values[key] }
+    }
+    private func setValue(_ value: Codable, for key: String) {
+        self.queue.sync { self._values[key] = value }
+    }
+    private func writeTS(for key: String) -> Date? {
+        self.queue.sync { self._writeTS[key] }
+    }
+    private func setWriteTS(_ date: Date, for key: String) {
+        self.queue.sync { self._writeTS[key] = date }
     }
     
     init() {
@@ -69,27 +78,27 @@ public class DB {
     
     public func setup<T: Codable>(_ type: T.Type, _ key: String) {
         self.clean(key)
-        if let raw = self.lldb?.findOne(key), let value = try? JSONDecoder().decode(type, from: Data(raw.utf8)) {
-            self.values[key] = value
+        if let raw = self.lldb?.findOne(key), let value = try? DB.decoder.decode(type, from: Data(raw.utf8)) {
+            self.setValue(value, for: key)
         }
     }
-    
+
     public func insert(key: String, value: Codable, ts: Bool = true, force: Bool = false) {
-        self.values[key] = value
-        guard let blobData = try? JSONEncoder().encode(value), let str = String(data: blobData, encoding: .utf8) else { return }
-        
+        self.setValue(value, for: key)
+        guard let blobData = try? DB.encoder.encode(value), let str = String(data: blobData, encoding: .utf8) else { return }
+
         if ts {
             self.lldb?.insert("\(key)@\(Date().currentTimeSeconds())", value: str)
         }
-        
-        if !force, let ts = self.writeTS[key], (Date().timeIntervalSince1970-ts.timeIntervalSince1970) < 30 { return }
-        
+
+        if !force, let ts = self.writeTS(for: key), (Date().timeIntervalSince1970-ts.timeIntervalSince1970) < 30 { return }
+
         self.lldb?.insert(key, value: str)
-        self.writeTS[key] = Date()
+        self.setWriteTS(Date(), for: key)
     }
-    
+
     public func findOne<T: Decodable>(_ dynamicType: T.Type, key: String) -> T? {
-        return self.values[key] as? T
+        return self.value(for: key) as? T
     }
     
     private func clean(_ key: String) {

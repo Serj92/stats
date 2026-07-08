@@ -139,7 +139,7 @@ public class MemoryWidget: WidgetWrapper {
         self.percentage = usedPercentage
         
         DispatchQueue.main.async(execute: {
-            self.display()
+            self.needsDisplay = true
         })
     }
     
@@ -147,7 +147,7 @@ public class MemoryWidget: WidgetWrapper {
         guard self.pressureLevel != newPressureLevel else { return }
         self.pressureLevel = newPressureLevel
         DispatchQueue.main.async(execute: {
-            self.display()
+            self.needsDisplay = true
         })
     }
     
@@ -176,19 +176,19 @@ public class MemoryWidget: WidgetWrapper {
     @objc private func toggleOrder(_ sender: NSControl) {
         self.orderReversedState = controlState(sender)
         Store.shared.set(key: "\(self.title)_\(self.type.rawValue)_orderReversed", value: self.orderReversedState)
-        self.display()
+        self.needsDisplay = true
     }
     
     @objc private func toggleSymbols(_ sender: NSControl) {
         self.symbolsState = controlState(sender)
         Store.shared.set(key: "\(self.title)_\(self.type.rawValue)_symbols", value: self.symbolsState)
-        self.display()
+        self.needsDisplay = true
     }
     
     @objc private func toggleColor(_ sender: NSMenuItem) {
         guard let key = sender.representedObject as? String else { return }
         self.colorState = SColor.fromString(key, defaultValue: self.colorState)
         Store.shared.set(key: "\(self.title)_\(self.type.rawValue)_color", value: self.colorState.key)
-        self.display()
+        self.needsDisplay = true
     }
 }

@@ -237,12 +237,16 @@ public class ProcessView: NSStackView {
     
     fileprivate func set(_ process: Process_p, _ values: [String]) {
         if self.lock && process.pid != self.pid { return }
-        
+
         self.labelView.stringValue = process.name
         values.enumerated().forEach({ self.valueViews[$0.offset].stringValue = $0.element })
-        self.imageView.image = process.icon
-        self.pid = process.pid
-        self.toolTip = "pid: \(process.pid)"
+        // process.icon does an NSRunningApplication lookup + icon decode; the pid identifies the
+        // app, so only refresh the image/tooltip when the row's process actually changed
+        if process.pid != self.pid {
+            self.imageView.image = process.icon
+            self.toolTip = "pid: \(process.pid)"
+            self.pid = process.pid
+        }
     }
     
     fileprivate func clear(_ symbol: String = "") {

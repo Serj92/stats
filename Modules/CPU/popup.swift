@@ -47,7 +47,8 @@ internal class Popup: PopupWrapper {
         }
     }
     private let processHeight: CGFloat = 22
-    
+    private let fanControlHeight: CGFloat = 22 + Constants.Popup.separatorHeight
+
     private var systemField: NSTextField? = nil
     private var userField: NSTextField? = nil
     private var idleField: NSTextField? = nil
@@ -77,6 +78,8 @@ internal class Popup: PopupWrapper {
     
     private var chartPrefSection: PreferencesSection? = nil
     private var sliderView: NSView? = nil
+    private var fanControlView: NSView? = nil
+    private var fanBoostSwitch: NSSwitch? = nil
     
     private var lineChart: LineChartView? = nil
     private var columnChart: ColumnChartView? = nil
@@ -107,6 +110,12 @@ internal class Popup: PopupWrapper {
     private var chartColor: NSColor { self.chartColorState.additional as? NSColor ?? NSColor.systemBlue }
     private var eCoresColorState: SColor = .teal
     private var eCoresColor: NSColor { self.eCoresColorState.additional as? NSColor ?? NSColor.systemTeal }
+    // core topology is fixed at runtime; cache id -> type once to avoid an O(cores²) lookup per tick
+    private lazy var coreTypeByID: [Int: coreType] = {
+        var map: [Int: coreType] = [:]
+        SystemKit.shared.device.info.cpu?.cores?.forEach { map[Int($0.id)] = $0.type }
+        return map
+    }()
     private var pCoresColorState: SColor = .indigo
     private var pCoresColor: NSColor { self.pCoresColorState.additional as? NSColor ?? NSColor.systemBlue }
     private var sCoresColorState: SColor = .orange
@@ -154,6 +163,7 @@ internal class Popup: PopupWrapper {
         self.addArrangedSubview(self.initDashboard())
         self.addArrangedSubview(self.initChart())
         self.addArrangedSubview(self.initDetails())
+        self.addArrangedSubview(self.initFanControl())
         self.addArrangedSubview(self.initAverage())
         self.addArrangedSubview(self.initProcesses())
         
@@ -170,6 +180,7 @@ internal class Popup: PopupWrapper {
     
     public override func appear() {
         self.uptimeField?.stringValue = self.uptimeValue
+        self.fanBoostSwitch?.state = self.isFanBoostActive ? .on : .off
         self.replay(self.loadCache, render: self.renderLoad)
         self.replay(self.temperatureCache, render: self.renderTemperature)
         self.replay(self.frequencyCache, render: self.renderFrequency)
@@ -337,6 +348,76 @@ internal class Popup: PopupWrapper {
         return view
     }
     
+    // MARK: - Fan control (fun-fan-control boost toggle)
+    //
+    // A convenience switch that flips the external `fun-fan-control` daemon between its
+    // temperature curve and forced full speed. It only writes a flag file that the daemon
+    // polls every tick — no root, no SMC access from Stats. The section is hidden unless
+    // fun-fan-control is installed. Path is hardcoded on purpose (personal setup).
+    private var fancurvedDir: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("fancurved")
+    }
+    private var fanBoostURL: URL { self.fancurvedDir.appendingPathComponent("boost") }
+    private var isFanControlInstalled: Bool {
+        FileManager.default.fileExists(atPath: self.fancurvedDir.path)
+    }
+    private var isFanBoostActive: Bool {
+        FileManager.default.fileExists(atPath: self.fanBoostURL.path)
+    }
+
+    private func initFanControl() -> NSView {
+        guard self.isFanControlInstalled else {
+            let v = NSView()
+            self.fanControlView = v
+            return v
+        }
+
+        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: self.fanControlHeight))
+        view.heightAnchor.constraint(equalToConstant: view.bounds.height).isActive = true
+        let separator = separatorView(localizedString("Fans"), origin: NSPoint(
+            x: 0,
+            y: self.fanControlHeight-Constants.Popup.separatorHeight
+        ), width: self.frame.width)
+        let container: NSStackView = NSStackView(frame: NSRect(x: 0, y: 0, width: view.frame.width, height: separator.frame.origin.y))
+        container.orientation = .vertical
+        container.spacing = 0
+
+        let row: NSView = NSView(frame: NSRect(x: 0, y: 0, width: container.frame.width, height: 22))
+        row.heightAnchor.constraint(equalToConstant: row.bounds.height).isActive = true
+
+        let labelView: LabelField = LabelField(frame: NSRect(x: 0, y: (22-16)/2, width: row.frame.width - 60, height: 16), localizedString("Max fan speed"))
+
+        let toggle = NSSwitch()
+        toggle.controlSize = .mini
+        toggle.state = self.isFanBoostActive ? .on : .off
+        toggle.target = self
+        toggle.action = #selector(self.toggleFanBoost)
+        toggle.sizeToFit()
+        toggle.frame = NSRect(x: row.frame.width - toggle.frame.width - 4, y: (22-toggle.frame.height)/2, width: toggle.frame.width, height: toggle.frame.height)
+        toggle.autoresizingMask = [.minXMargin]
+        self.fanBoostSwitch = toggle
+
+        row.addSubview(labelView)
+        row.addSubview(toggle)
+        container.addArrangedSubview(row)
+
+        view.addSubview(separator)
+        view.addSubview(container)
+        self.fanControlView = view
+        return view
+    }
+
+    @objc private func toggleFanBoost(_ sender: NSSwitch) {
+        let fm = FileManager.default
+        if sender.state == .on {
+            try? fm.createDirectory(at: self.fancurvedDir, withIntermediateDirectories: true)
+            fm.createFile(atPath: self.fanBoostURL.path, contents: nil)
+        } else {
+            try? fm.removeItem(at: self.fanBoostURL)
+        }
+    }
+
     private func initFrequency() -> NSView {
         let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: self.frequencyHeight))
         view.heightAnchor.constraint(equalToConstant: view.bounds.height).isActive = true
@@ -405,7 +486,7 @@ internal class Popup: PopupWrapper {
             ColorValue(value.userLoad, color: self.userColor)
         ])
         self.circle?.setNonActiveSegmentColor(self.idleColor)
-        self.circle?.display()
+        self.circle?.needsDisplay = true
         
         if let field = self.eCoresField, let usage = value.usageECores {
             field.stringValue = "\(Int(usage * 100))%"
@@ -418,10 +499,10 @@ internal class Popup: PopupWrapper {
         }
         
         var usagePerCore: [ColorValue] = []
-        if let cores = SystemKit.shared.device.info.cpu?.cores, !cores.isEmpty {
+        if !self.coreTypeByID.isEmpty {
             for i in 0..<value.usagePerCore.count {
-                let core = cores.first(where: { $0.id == i })
-                let color = core?.type == .efficiency ? self.eCoresColor : core?.type == .super ? self.sCoresColor : self.pCoresColor
+                let type = self.coreTypeByID[i]
+                let color = type == .efficiency ? self.eCoresColor : type == .super ? self.sCoresColor : self.pCoresColor
                 usagePerCore.append(ColorValue(value.usagePerCore[i], color: color))
             }
         } else {
@@ -430,9 +511,9 @@ internal class Popup: PopupWrapper {
             }
         }
         self.columnChart?.setValues(usagePerCore)
-        self.columnChart?.display()
-        
-        self.lineChart?.display()
+        self.columnChart?.needsDisplay = true
+
+        self.lineChart?.needsDisplay = true
     }
     
     public func temperatureCallback(_ value: Double?) {
@@ -448,7 +529,7 @@ internal class Popup: PopupWrapper {
         self.temperatureCircle?.toolTip = "\(localizedString("CPU temperature")): \(temperature(value))"
         self.temperatureCircle?.setValue(value/100)
         self.temperatureCircle?.setText(temperature(value))
-        self.temperatureCircle?.display()
+        self.temperatureCircle?.needsDisplay = true
     }
     
     public func frequencyCallback(_ value: CPU_Frequency?) {
@@ -475,7 +556,7 @@ internal class Popup: PopupWrapper {
                 circle.setValue((100*v)/self.maxFreq)
                 circle.setText("\((v/1000).rounded(toPlaces: 2))")
                 circle.toolTip = "\(localizedString("CPU frequency")): \(Int(v)) MHz - \(((100*v)/self.maxFreq).rounded(toPlaces: 2))%"
-                circle.display()
+                circle.needsDisplay = true
             }
         }
         

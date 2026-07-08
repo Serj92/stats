@@ -205,6 +205,8 @@ public class Network: Module {
         }
         
         self.settingsView.callback = { [weak self] in
+            self?.popupView.settingsUpdated()
+            self?.portalView.settingsUpdated()
             self?.usageReader?.getDetails()
             self?.usageReader?.read()
         }

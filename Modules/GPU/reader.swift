@@ -41,9 +41,19 @@ private func maxANEPower(for platform: Platform?) -> Double {
 }
 
 internal class InfoReader: Reader<GPUs> {
+    // Cached accelerator service handles: static props (IOClass, PCI match) are read once,
+    // per tick only PerformanceStatistics/AGCInfo are fetched point-wise instead of
+    // serializing the whole registry entry property table via fetchIOService.
+    private struct Accelerator {
+        let service: io_registry_entry_t
+        let IOClass: String
+        let accMatch: String
+    }
+
     private var gpus: GPUs = GPUs()
     private var displays: [gpu_s] = []
     private var devices: [device] = []
+    private var accelerators: [Accelerator] = []
 
     private var aneChannels: CFMutableDictionary? = nil
     private var aneSubscription: IOReportSubscriptionRef? = nil
@@ -100,28 +110,84 @@ internal class InfoReader: Reader<GPUs> {
     }
     
     public override func read() {
-        guard let accelerators = fetchIOService(kIOAcceleratorClassName) else {
-            return
+        if self.accelerators.isEmpty {
+            self.cacheAccelerators()
         }
-        var devices = self.devices
-        
-        for (index, accelerator) in accelerators.enumerated() {
-            guard let IOClass = accelerator.object(forKey: "IOClass") as? String else {
-                error("IOClass not found", log: self.log)
-                return
-            }
-            
-            guard let stats = accelerator["PerformanceStatistics"] as? [String: Any] else {
+        guard !self.accelerators.isEmpty else { return }
+
+        if !self.process() {
+            // a handle went stale (GPU list changed, e.g. eGPU plug/unplug) — re-resolve once
+            self.cacheAccelerators()
+            guard self.process() else {
                 error("PerformanceStatistics not found", log: self.log)
                 return
             }
-            
+        }
+
+        #if arch(arm64)
+        let anePower = self.readANEPower()
+        let aneUtil = anePower.map { min(1.0, max(0.0, $0 / self.aneMaxPower)) }
+        let fpsValue = self.readFrames()
+        for i in self.gpus.list.indices where self.gpus.list[i].IOClass.lowercased().contains("agx") {
+            self.gpus.list[i].aneUtilization = aneUtil ?? 0
+            self.gpus.list[i].fps = fpsValue
+        }
+        #endif
+
+        self.gpus.list.sort{ !$0.state && $1.state }
+        self.callback(self.gpus)
+    }
+
+    private func cacheAccelerators() {
+        self.releaseAccelerators()
+
+        var iterator: io_iterator_t = io_iterator_t()
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching(kIOAcceleratorClassName), &iterator) == kIOReturnSuccess else {
+            return
+        }
+
+        var obj: io_registry_entry_t = IOIteratorNext(iterator)
+        while obj != 0 {
+            if let ioClass = IORegistryEntryCreateCFProperty(obj, "IOClass" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? String {
+                let match = (
+                    IORegistryEntryCreateCFProperty(obj, "IOPCIMatch" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? String ??
+                    IORegistryEntryCreateCFProperty(obj, "IOPCIPrimaryMatch" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? String ??
+                    ""
+                ).lowercased()
+                self.accelerators.append(Accelerator(service: obj, IOClass: ioClass, accMatch: match))
+            } else {
+                IOObjectRelease(obj)
+            }
+            obj = IOIteratorNext(iterator)
+        }
+        IOObjectRelease(iterator)
+    }
+
+    private func releaseAccelerators() {
+        self.accelerators.forEach { IOObjectRelease($0.service) }
+        self.accelerators.removeAll()
+    }
+
+    deinit {
+        self.releaseAccelerators()
+    }
+
+    // returns false when PerformanceStatistics could not be read for a cached handle
+    private func process() -> Bool {
+        var devices = self.devices
+
+        for (index, accelerator) in self.accelerators.enumerated() {
+            guard let stats = IORegistryEntryCreateCFProperty(accelerator.service, "PerformanceStatistics" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? [String: Any] else {
+                return false
+            }
+            let IOClass = accelerator.IOClass
+            let accMatch = accelerator.accMatch
+
             var id: String = ""
             var vendor: String? = nil
             var model: String = ""
             var cores: Int? = nil
-            let accMatch = (accelerator["IOPCIMatch"] as? String ?? accelerator["IOPCIPrimaryMatch"] as? String ?? "").lowercased()
-            
+
             for (i, device) in devices.enumerated() {
                 if accMatch.range(of: device.pci) != nil && !device.used {
                     model = device.model
@@ -199,10 +265,11 @@ internal class InfoReader: Reader<GPUs> {
                 ))
             }
             guard let idx = self.gpus.list.firstIndex(where: { $0.id == id }) else {
-                return
+                continue
             }
-            
-            if let agcInfo = accelerator["AGCInfo"] as? [String: Int], let state = agcInfo["poweredOffByAGC"] {
+
+            if let agcInfo = IORegistryEntryCreateCFProperty(accelerator.service, "AGCInfo" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? [String: Int],
+               let state = agcInfo["poweredOffByAGC"] {
                 self.gpus.list[idx].state = state == 0
             }
             
@@ -237,19 +304,7 @@ internal class InfoReader: Reader<GPUs> {
                 self.gpus.list[idx].memoryClock = value
             }
         }
-        
-        #if arch(arm64)
-        let anePower = self.readANEPower()
-        let aneUtil = anePower.map { min(1.0, max(0.0, $0 / self.aneMaxPower)) }
-        let fpsValue = self.readFrames()
-        for i in self.gpus.list.indices where self.gpus.list[i].IOClass.lowercased().contains("agx") {
-            self.gpus.list[i].aneUtilization = aneUtil ?? 0
-            self.gpus.list[i].fps = fpsValue
-        }
-        #endif
-        
-        self.gpus.list.sort{ !$0.state && $1.state }
-        self.callback(self.gpus)
+        return true
     }
     
     // MARK: - FPS

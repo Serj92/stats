@@ -64,6 +64,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     private var displayAsleep: Bool = false
     private var screenLocked: Bool = false
     private var menuBarHidden: Bool = false
+
+    private var globalKeyMonitor: Any?
+    private var localKeyMonitor: Any?
     
     static func main() {
         let launchStart = Date()
@@ -103,14 +106,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         // .visible occlusion flag, so pause too when no menu-bar item is on screen.
         NotificationCenter.default.addObserver(self, selector: #selector(self.menuBarOcclusionChanged), name: NSWindow.didChangeOcclusionStateNotification, object: nil)
         
-        NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
-            self?.handleKeyEvent(event)
-        }
-        NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
-            self?.handleKeyEvent(event)
-            return event
-        }
-        
+        // Only watch keystrokes if a popup shortcut is configured — otherwise every keystroke
+        // system-wide would wake Stats for nothing. Re-evaluated when a shortcut changes.
+        NotificationCenter.default.addObserver(self, selector: #selector(self.refreshKeyboardMonitors), name: .keyboardShortcutChanged, object: nil)
+        self.refreshKeyboardMonitors()
+
         info("Stats started in \((startingPoint.timeIntervalSinceNow * -1).rounded(toPlaces: 4)) seconds")
         self.startTS = Date()
     }
@@ -154,6 +154,32 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     private func updateModulesSleep() {
         let shouldSleep = self.displayAsleep || self.screenLocked || self.menuBarHidden
         modules.forEach { $0.setReadersSleep(shouldSleep) }
+    }
+
+    @objc private func refreshKeyboardMonitors() {
+        let needed = modules.contains { !$0.popupKeyboardShortcut.isEmpty }
+        if needed {
+            if self.globalKeyMonitor == nil {
+                self.globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
+                    self?.handleKeyEvent(event)
+                }
+            }
+            if self.localKeyMonitor == nil {
+                self.localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
+                    self?.handleKeyEvent(event)
+                    return event
+                }
+            }
+        } else {
+            if let monitor = self.globalKeyMonitor {
+                NSEvent.removeMonitor(monitor)
+                self.globalKeyMonitor = nil
+            }
+            if let monitor = self.localKeyMonitor {
+                NSEvent.removeMonitor(monitor)
+                self.localKeyMonitor = nil
+            }
+        }
     }
     
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

@@ -87,12 +87,9 @@ internal class Popup: PopupWrapper {
     private var latency: [Double] = []
     private var jitter: [Double] = []
     
-    private var base: DataSizeBase {
-        DataSizeBase(rawValue: Store.shared.string(key: "\(self.title)_base", defaultValue: "byte")) ?? .byte
-    }
-    private var speedUnit: String {
-        networkSpeedUnit(from: Store.shared.string(key: "\(self.title)_speedUnit", defaultValue: NetworkSpeedUnitAuto)).key
-    }
+    // cached from Store; refreshed via settingsUpdated() on settings change instead of re-read per tick
+    private var base: DataSizeBase = .byte
+    private var speedUnit: String = networkSpeedUnit(from: NetworkSpeedUnitAuto).key
     private var numberOfProcesses: Int {
         Store.shared.int(key: "\(self.title)_processes", defaultValue: 8)
     }
@@ -133,6 +130,8 @@ internal class Popup: PopupWrapper {
         self.publicIPState = Store.shared.bool(key: "\(self.title)_publicIP", defaultValue: self.publicIPState)
         self.interfaceDetailsState = Store.shared.bool(key: "\(self.title)_interfaceDetails", defaultValue: self.interfaceDetailsState)
         self.emojiCCState = Store.shared.bool(key: "\(self.title)_emojiCC", defaultValue: self.emojiCCState)
+        self.base = DataSizeBase(rawValue: Store.shared.string(key: "\(self.title)_base", defaultValue: "byte")) ?? .byte
+        self.speedUnit = networkSpeedUnit(from: Store.shared.string(key: "\(self.title)_speedUnit", defaultValue: NetworkSpeedUnitAuto)).key
         
         self.addArrangedSubview(self.initDashboard())
         self.addArrangedSubview(self.initChart())
@@ -402,12 +401,18 @@ internal class Popup: PopupWrapper {
     
     public func usageCallback(_ value: Network_Usage) {
         self.apply(value, to: self.usageCache, render: self.renderUsage)
-        
+
         if let chart = self.chart {
-            chart.setBase(self.base)
-            chart.setSpeedUnit(self.speedUnit)
             chart.addValue(upload: Double(value.bandwidth.upload), download: Double(value.bandwidth.download))
         }
+    }
+
+    // called from the settings callback (not per tick); base/speedUnit change only from the UI
+    public func settingsUpdated() {
+        self.base = DataSizeBase(rawValue: Store.shared.string(key: "\(self.title)_base", defaultValue: "byte")) ?? .byte
+        self.speedUnit = networkSpeedUnit(from: Store.shared.string(key: "\(self.title)_speedUnit", defaultValue: NetworkSpeedUnitAuto)).key
+        self.chart?.setBase(self.base)
+        self.chart?.setSpeedUnit(self.speedUnit)
     }
     
     private func renderUsage(_ value: Network_Usage) {
@@ -587,8 +592,8 @@ internal class Popup: PopupWrapper {
         if resized {
             self.recalculateHeight()
         }
-        
-        self.chart?.display()
+
+        self.chart?.needsDisplay = true
     }
     
     public func connectivityCallback(_ value: Network_Connectivity?) {
@@ -625,7 +630,7 @@ internal class Popup: PopupWrapper {
         self.jitterField?.stringValue = jitter
         
         self.connectivityField?.setStatus(value?.status)
-        self.connectivityChart?.display()
+        self.connectivityChart?.needsDisplay = true
     }
     
     public func processCallback(_ list: [Network_Process]) {
@@ -727,6 +732,7 @@ internal class Popup: PopupWrapper {
             self.uploadStateView?.setColor(color)
             self.chart?.setColors(out: color)
         }
+        NotificationCenter.default.post(name: .networkChartSettings, object: nil)
     }
     @objc private func toggleDownloadColor(_ sender: NSMenuItem) {
         guard let key = sender.representedObject as? String else { return }
@@ -738,6 +744,7 @@ internal class Popup: PopupWrapper {
             self.downloadStateView?.setColor(color)
             self.chart?.setColors(in: color)
         }
+        NotificationCenter.default.post(name: .networkChartSettings, object: nil)
     }
     @objc private func toggleReverseOrder(_ sender: NSControl) {
         self.reverseOrderState = controlState(sender)
@@ -758,6 +765,7 @@ internal class Popup: PopupWrapper {
         self.chart?.setScale(self.chartScale, Double(self.chartFixedScaleSize.toBytes(self.chartFixedScale)))
         self.chartPrefSection?.setRowVisibility(2, newState: self.chartScale == .fixed)
         Store.shared.set(key: "\(self.title)_chartScale", value: key)
+        NotificationCenter.default.post(name: .networkChartSettings, object: nil)
         self.display()
     }
     @objc private func togglePublicIP(_ sender: NSControl) {
@@ -776,11 +784,13 @@ internal class Popup: PopupWrapper {
     @objc private func toggleFixedScale(_ newValue: Int) {
         self.chart?.setScale(self.chartScale, Double(self.chartFixedScaleSize.toBytes(newValue)))
         Store.shared.set(key: "\(self.title)_chartFixedScale", value: newValue)
+        NotificationCenter.default.post(name: .networkChartSettings, object: nil)
     }
     private func toggleFixedScaleSize(_ newValue: KeyValue_p) {
         guard let newUnit = newValue as? SizeUnit else { return }
         self.chartFixedScaleSize = newUnit
         Store.shared.set(key: "\(self.title)_chartFixedScaleSize", value: self.chartFixedScaleSize.key)
+        NotificationCenter.default.post(name: .networkChartSettings, object: nil)
         self.display()
     }
     @objc private func toggleInterfaceDetails() {

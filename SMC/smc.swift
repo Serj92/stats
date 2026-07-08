@@ -165,6 +165,9 @@ public class SMC {
     // Key metadata (dataSize/dataType) is immutable for a given SMC key, so cache it
     // to skip the redundant readKeyInfo syscall on every subsequent read of that key.
     private var keyInfoCache: [String: (dataSize: IOByteCount32, dataType: String)] = [:]
+    // SMC key topology is fixed from boot, so a key that isn't present will never appear.
+    // Remember misses (e.g. TC0D/TC0E on Apple Silicon) to skip the failing syscall each tick.
+    private var missingKeys: Set<String> = []
     private let keyInfoCacheLock = NSLock()
 
     public init() {
@@ -211,7 +214,11 @@ public class SMC {
         
         result = read(&val)
         if result != kIOReturnSuccess {
+            // Missing keys are expected (varies by hardware) and now negative-cached; avoid
+            // spamming this every tick in Release. Keep it in Debug for diagnostics.
+            #if DEBUG
             print("Error read(\(key)): " + (String(cString: mach_error_string(result), encoding: String.Encoding.ascii) ?? "unknown error"))
+            #endif
             return nil
         }
         
@@ -648,7 +655,12 @@ public class SMC {
 
         self.keyInfoCacheLock.lock()
         let cachedInfo = self.keyInfoCache[value.pointee.key]
+        let knownMissing = self.missingKeys.contains(value.pointee.key)
         self.keyInfoCacheLock.unlock()
+
+        if knownMissing {
+            return kIOReturnNotFound
+        }
 
         if let cachedInfo {
             value.pointee.dataSize = UInt32(cachedInfo.dataSize)
@@ -659,6 +671,10 @@ public class SMC {
 
             result = call(SMCKeys.kernelIndex.rawValue, input: &input, output: &output)
             if result != kIOReturnSuccess {
+                // readKeyInfo failing means the key isn't present; remember it (topology is static)
+                self.keyInfoCacheLock.lock()
+                self.missingKeys.insert(value.pointee.key)
+                self.keyInfoCacheLock.unlock()
                 return result
             }
 

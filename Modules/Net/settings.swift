@@ -373,11 +373,15 @@ internal class Settings: NSStackView, Settings_v, NSTextFieldDelegate {
         guard let key = sender.representedObject as? String else { return }
         self.baseValue = key
         Store.shared.set(key: "\(self.title)_base", value: self.baseValue)
+        self.callback() // refresh cached base in popup/portal
+        NotificationCenter.default.post(name: .networkChartSettings, object: nil) // refresh speed widget
     }
     @objc private func toggleSpeedUnit(_ sender: NSMenuItem) {
         guard let key = sender.representedObject as? String else { return }
         self.speedUnitValue = networkSpeedUnit(from: key).key
         Store.shared.set(key: "\(self.title)_speedUnit", value: self.speedUnitValue)
+        self.callback() // refresh cached speedUnit in popup/portal
+        NotificationCenter.default.post(name: .networkChartSettings, object: nil) // refresh speed widget
     }
     @objc private func changeConnectivityMode(_ sender: NSMenuItem) {
         guard let key = sender.representedObject as? String else { return }

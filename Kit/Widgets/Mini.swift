@@ -151,7 +151,7 @@ public class Mini: WidgetWrapper {
         guard self._value != newValue else { return }
         self._value = newValue
         DispatchQueue.main.async(execute: {
-            self.display()
+            self.needsDisplay = true
         })
     }
     
@@ -179,7 +179,7 @@ public class Mini: WidgetWrapper {
         guard self._colorZones != newColorZones else { return }
         self._colorZones = newColorZones
         DispatchQueue.main.async(execute: {
-            self.display()
+            self.needsDisplay = true
         })
     }
     
@@ -187,7 +187,7 @@ public class Mini: WidgetWrapper {
         guard self._suffix != newSuffix else { return }
         self._suffix = newSuffix
         DispatchQueue.main.async(execute: {
-            self.display()
+            self.needsDisplay = true
         })
     }
     
@@ -220,13 +220,13 @@ public class Mini: WidgetWrapper {
         guard let key = sender.representedObject as? String else { return }
         self.colorState = SColor.fromString(key, defaultValue: self.colorState)
         Store.shared.set(key: "\(self.title)_\(self.type.rawValue)_color", value: self.colorState.key)
-        self.display()
+        self.needsDisplay = true
     }
     
     @objc private func toggleLabel(_ sender: NSControl) {
         self.labelState = controlState(sender)
         Store.shared.set(key: "\(self.title)_\(self.type.rawValue)_label", value: self.labelState)
-        self.display()
+        self.needsDisplay = true
     }
     
     @objc private func toggleAlignment(_ sender: NSMenuItem) {
@@ -235,6 +235,6 @@ public class Mini: WidgetWrapper {
             self.alignmentState = newAlignment.key
         }
         Store.shared.set(key: "\(self.title)_\(self.type.rawValue)_alignment", value: key)
-        self.display()
+        self.needsDisplay = true
     }
 }

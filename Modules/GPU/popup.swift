@@ -159,19 +159,19 @@ internal class Popup: PopupWrapper {
         if let utilization = value.utilization {
             self.usageCircle?.toolTip = "\(localizedString("GPU usage")): \(Int(utilization.rounded(toPlaces: 2) * 100))%"
             self.usageCircle?.setValue(utilization)
-            self.usageCircle?.display()
+            self.usageCircle?.needsDisplay = true
             self.utilizationField?.stringValue = "\(Int(utilization*100))%"
         }
         if let utilization = value.renderUtilization {
             self.renderCircle?.toolTip = "\(localizedString("Render usage")): \(Int(utilization.rounded(toPlaces: 2) * 100))%"
             self.renderCircle?.setValue(utilization)
-            self.renderCircle?.display()
+            self.renderCircle?.needsDisplay = true
             self.renderField?.stringValue = "\(Int(utilization*100))%"
         }
         if let utilization = value.tilerUtilization {
             self.tilerCircle?.toolTip = "\(localizedString("Tiler usage")): \(Int(utilization.rounded(toPlaces: 2) * 100))%"
             self.tilerCircle?.setValue(utilization)
-            self.tilerCircle?.display()
+            self.tilerCircle?.needsDisplay = true
             self.tilerField?.stringValue = "\(Int(utilization*100))%"
         }
         if let utilization = value.aneUtilization {
@@ -180,8 +180,8 @@ internal class Popup: PopupWrapper {
         if let fps = value.fps {
             self.fpsField?.stringValue = "\(Int(fps.rounded()))"
         }
-        
-        self.chart?.display()
+
+        self.chart?.needsDisplay = true
     }
     
     // MARK: - Settings

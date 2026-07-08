@@ -81,7 +81,26 @@ public class SystemStats {
     public var plan: AccountPlan?
     
     private let log: NextLog
-    private var mqtt: MQTTManager = MQTTManager()
+    // MQTTManager creates a Reachability callback on init; defer it until Remote is actually
+    // used so users who never enable Remote don't pay for standing machinery
+    private var _mqtt: MQTTManager?
+    private var mqtt: MQTTManager {
+        if let m = self._mqtt { return m }
+        let m = MQTTManager()
+        m.commandCallback = { [weak self] cmd, payload in
+            self?.command(cmd: cmd, payload: payload)
+        }
+        m.registerCallback = { [weak self] in
+            self?.registerDevice()
+        }
+        m.unregisterHandler = { [weak self] in
+            guard let self else { return }
+            info("Unregistered from MQTT broker, stopping Remote...", log: self.log)
+            self.logout()
+        }
+        self._mqtt = m
+        return m
+    }
     public let session: URLSession = {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
@@ -146,29 +165,17 @@ public class SystemStats {
             Store.shared.set(key: "remote_id", value: id.uuidString)
         }
         self.id = id
-        
-        self.mqtt.commandCallback = { [weak self] cmd, payload in
-            self?.command(cmd: cmd, payload: payload)
-        }
-        self.mqtt.registerCallback = { [weak self] in
-            self?.registerDevice()
-        }
-        self.mqtt.unregisterHandler = { [weak self] in
-            guard let self else { return }
-            info("Unregistered from MQTT broker, stopping Remote...", log: self.log)
-            self.logout()
-        }
-        
+
         if self.auth.hasCredentials() {
             info("Found auth credentials for remote monitoring, starting Remote...", log: self.log)
-            self.start()
+            self.start() // touches self.mqtt lazily, wiring its callbacks on first use
         }
         
         NotificationCenter.default.addObserver(self, selector: #selector(self.successLogin), name: .remoteLoginSuccess, object: nil)
     }
     
     deinit {
-        self.mqtt.disconnect()
+        self._mqtt?.disconnect() // don't instantiate just to tear down
         NotificationCenter.default.removeObserver(self, name: .remoteLoginSuccess, object: nil)
     }
     
@@ -218,12 +225,12 @@ public class SystemStats {
     }
     
     private func stop() {
-        self.mqtt.disconnect()
+        self._mqtt?.disconnect() // don't instantiate just to tear down
         NotificationCenter.default.post(name: .remoteState, object: nil, userInfo: ["auth": self.isAuthorized])
     }
-    
+
     public func terminate() {
-        self.mqtt.disconnect()
+        self._mqtt?.disconnect() // called for every user at shutdown; don't instantiate here
     }
     
     private func registerDevice(omitCooldown: Bool = false) {

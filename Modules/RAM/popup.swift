@@ -265,16 +265,16 @@ internal class Popup: PopupWrapper {
         self.circle?.setValue(value.usage)
         self.circle?.setSegments(values)
         self.circle?.setNonActiveSegmentColor(self.freeColor)
-        self.circle?.display()
-        
+        self.circle?.needsDisplay = true
+
         self.level?.setActiveSegment(value.pressure.value.number())
         self.level?.setTitle(localizedString(value.pressure.value.rawValue.capitalized))
         self.level?.toolTip = "\(localizedString("Memory pressure")): \(value.pressure.value.rawValue)"
-        self.level?.display()
-        
+        self.level?.needsDisplay = true
+
         self.bar.setValues(values)
-        
-        self.chart?.display()
+
+        self.chart?.needsDisplay = true
     }
     
     public func processCallback(_ list: [TopProcess]) {

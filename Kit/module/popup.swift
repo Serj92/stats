@@ -64,6 +64,7 @@ open class PopupWrapper: NSStackView, Popup_p {
     open func setKeyboardShortcut(_ binding: [UInt16]) {
         self.keyboardShortcut = binding
         Store.shared.set(key: "\(self.title)_popup_keyboardShortcut", value: binding)
+        NotificationCenter.default.post(name: .keyboardShortcutChanged, object: nil)
     }
     
     public func apply<T>(_ value: T, to cache: PopupCache<T>, render: @escaping (T) -> Void) {

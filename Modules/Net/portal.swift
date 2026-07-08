@@ -20,46 +20,58 @@ public class Portal: PortalWrapper {
     private var localIPField: NSTextField? = nil
     private var localIPView: NSView? = nil
     
-    private var base: DataSizeBase {
-        DataSizeBase(rawValue: Store.shared.string(key: "\(self.name)_base", defaultValue: "byte")) ?? .byte
-    }
-    private var speedUnit: String {
-        networkSpeedUnit(from: Store.shared.string(key: "\(self.name)_speedUnit", defaultValue: NetworkSpeedUnitAuto)).key
-    }
+    // reverseOrderState is only read at load()
     private var reverseOrderState: Bool {
         Store.shared.bool(key: "\(self.name)_reverseOrder", defaultValue: false)
     }
-    private var chartScale: Scale {
-        Scale.fromString(Store.shared.string(key: "\(self.name)_chartScale", defaultValue: Scale.none.key))
+
+    // cached from Store; refreshed via settingsUpdated() on settings change instead of re-read per tick
+    private var base: DataSizeBase = .byte
+    private var speedUnit: String = networkSpeedUnit(from: NetworkSpeedUnitAuto).key
+    private var chartScale: Scale = .none
+    private var chartFixedScale: Int = 12
+    private var chartFixedScaleSize: SizeUnit = .MB
+    private var publicIPState: Bool = true
+    private var downloadColor: NSColor = NSColor.systemBlue
+    private var uploadColor: NSColor = NSColor.systemRed
+
+    private func loadSettings() {
+        self.base = DataSizeBase(rawValue: Store.shared.string(key: "\(self.name)_base", defaultValue: "byte")) ?? .byte
+        self.speedUnit = networkSpeedUnit(from: Store.shared.string(key: "\(self.name)_speedUnit", defaultValue: NetworkSpeedUnitAuto)).key
+        self.chartScale = Scale.fromString(Store.shared.string(key: "\(self.name)_chartScale", defaultValue: Scale.none.key))
+        self.chartFixedScale = Store.shared.int(key: "\(self.name)_chartFixedScale", defaultValue: 12)
+        self.chartFixedScaleSize = SizeUnit.fromString(Store.shared.string(key: "\(self.name)_chartFixedScaleSize", defaultValue: SizeUnit.MB.key))
+        self.publicIPState = Store.shared.bool(key: "\(self.name)_publicIP", defaultValue: true)
+
+        let dl = SColor.fromString(Store.shared.string(key: "\(self.name)_downloadColor", defaultValue: SColor.secondBlue.key))
+        self.downloadColor = (dl.additional as? NSColor) ?? NSColor.systemBlue
+        let ul = SColor.fromString(Store.shared.string(key: "\(self.name)_uploadColor", defaultValue: SColor.secondRed.key))
+        self.uploadColor = (ul.additional as? NSColor) ?? NSColor.systemRed
     }
-    private var chartFixedScale: Int {
-        Store.shared.int(key: "\(self.name)_chartFixedScale", defaultValue: 12)
+
+    deinit {
+        NotificationCenter.default.removeObserver(self, name: .networkChartSettings, object: nil)
     }
-    private var chartFixedScaleSize: SizeUnit {
-        SizeUnit.fromString(Store.shared.string(key: "\(self.name)_chartFixedScaleSize", defaultValue: SizeUnit.MB.key))
+
+    // called from the settings callback (base/speedUnit) and from the popup's chart-pref
+    // section via .networkChartSettings (colors/scale) — both fire only on a UI change, not per tick
+    public func settingsUpdated() {
+        self.loadSettings()
+        DispatchQueue.main.async(execute: {
+            self.chart?.setBase(self.base)
+            self.chart?.setSpeedUnit(self.speedUnit)
+            self.chart?.setScale(self.chartScale, Double(self.chartFixedScaleSize.toBytes(self.chartFixedScale)))
+            self.chart?.setColors(in: self.downloadColor, out: self.uploadColor)
+        })
     }
-    private var publicIPState: Bool {
-        Store.shared.bool(key: "\(self.name)_publicIP", defaultValue: true)
+
+    @objc private func chartSettingsChanged() {
+        self.settingsUpdated()
     }
-    
-    private var downloadColor: NSColor {
-        let v = SColor.fromString(Store.shared.string(key: "\(self.name)_downloadColor", defaultValue: SColor.secondBlue.key))
-        var value = NSColor.systemBlue
-        if let color = v.additional as? NSColor {
-            value = color
-        }
-        return value
-    }
-    private var uploadColor: NSColor {
-        let v = SColor.fromString(Store.shared.string(key: "\(self.name)_uploadColor", defaultValue: SColor.secondRed.key))
-        var value = NSColor.systemRed
-        if let color = v.additional as? NSColor {
-            value = color
-        }
-        return value
-    }
-    
+
     public override func load() {
+        self.loadSettings()
+        NotificationCenter.default.addObserver(self, selector: #selector(self.chartSettingsChanged), name: .networkChartSettings, object: nil)
         let view = NSStackView()
         view.orientation = .vertical
         view.distribution = .fill
@@ -108,11 +120,7 @@ public class Portal: PortalWrapper {
     public func usageCallback(_ value: Network_Usage) {
         DispatchQueue.main.async(execute: {
             if let chart = self.chart {
-                chart.setBase(self.base)
-                chart.setSpeedUnit(self.speedUnit)
                 chart.addValue(upload: Double(value.bandwidth.upload), download: Double(value.bandwidth.download))
-                chart.setScale(self.chartScale, Double(self.chartFixedScaleSize.toBytes(self.chartFixedScale)))
-                chart.setColors(in: self.downloadColor, out: self.uploadColor)
             }
             
             if self.publicIPState, let view = self.publicIPView, view.isHidden {

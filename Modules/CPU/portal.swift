@@ -44,6 +44,12 @@ public class Portal: PortalWrapper {
     private var pCoresColor: NSColor { self.pCoresColorState.additional as? NSColor ?? NSColor.systemBlue }
     private var sCoresColorState: SColor = .orange
     private var sCoresColor: NSColor { self.eCoresColorState.additional as? NSColor ?? NSColor.systemOrange }
+    // core topology is fixed at runtime; cache id -> type once to avoid an O(cores²) lookup per tick
+    private lazy var coreTypeByID: [Int: coreType] = {
+        var map: [Int: coreType] = [:]
+        SystemKit.shared.device.info.cpu?.cores?.forEach { map[Int($0.id)] = $0.type }
+        return map
+    }()
     
     public override func load() {
         self.loadColors()
@@ -160,10 +166,10 @@ public class Portal: PortalWrapper {
                 }
                 
                 var usagePerCore: [ColorValue] = []
-                if let cores = SystemKit.shared.device.info.cpu?.cores, !cores.isEmpty {
+                if !self.coreTypeByID.isEmpty {
                     for i in 0..<value.usagePerCore.count {
-                        let core = cores.first(where: { $0.id == i })
-                        let color = core?.type == .efficiency ? self.eCoresColor : core?.type == .super ? self.sCoresColor : self.pCoresColor
+                        let type = self.coreTypeByID[i]
+                        let color = type == .efficiency ? self.eCoresColor : type == .super ? self.sCoresColor : self.pCoresColor
                         usagePerCore.append(ColorValue(value.usagePerCore[i], color: color))
                     }
                 } else {

@@ -266,37 +266,60 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate {
         guard getifaddrs(&interfaceAddresses) == 0 else {
             return Bandwidth()
         }
-        
+
+        // resolved once per tick: interfaceID can hit configd, CWInterface is an IPC to airportd;
+        // the loop visits one ifaddrs entry per address family
+        let interfaceID = self.interfaceID
+        let wifiInterface = self.wifiClient.interface(withName: interfaceID)
+        var status: Bool? = nil
+        var transmitRate: Double? = nil
+        var laddr4: String? = nil
+        var laddr6: String? = nil
+
         var pointer = interfaceAddresses
         while pointer != nil {
             defer { pointer = pointer?.pointee.ifa_next }
             guard let pointer = pointer else { break }
-            
-            if String(cString: pointer.pointee.ifa_name) != self.interfaceID {
+
+            if String(cString: pointer.pointee.ifa_name) != interfaceID {
                 continue
             }
-            self.usage.interface?.status = (pointer.pointee.ifa_flags & UInt32(IFF_UP)) != 0
-            
-            if let wifiInterface = self.wifiClient.interface(withName: self.interfaceID) {
-                self.usage.interface?.transmitRate = wifiInterface.transmitRate()
+            status = (pointer.pointee.ifa_flags & UInt32(IFF_UP)) != 0
+
+            if let wifiInterface {
+                transmitRate = wifiInterface.transmitRate()
             } else if let raw = pointer.pointee.ifa_data {
                 let dataPtr = raw.assumingMemoryBound(to: if_data.self)
                 let ifData = dataPtr.pointee
                 let baud = UInt64(ifData.ifi_baudrate)
                 if baud > 0 {
-                    self.usage.interface?.transmitRate = Double(baud) / 1_000_000.0
+                    transmitRate = Double(baud) / 1_000_000.0
                 }
             }
-            
-            self.getLocalIP(pointer)
-            
+
+            if let ip = self.getLocalIP(pointer) {
+                if ip.family == UInt8(AF_INET) {
+                    laddr4 = ip.value
+                } else {
+                    laddr6 = ip.value
+                }
+            }
+
             if let info = self.getBytesInfo(pointer) {
                 totalUpload += info.upload
                 totalDownload += info.download
             }
         }
         freeifaddrs(interfaceAddresses)
-        
+
+        // single get-modify-set on the synchronized property instead of one per field per entry
+        var usage = self.usage
+        if let status { usage.interface?.status = status }
+        if let transmitRate { usage.interface?.transmitRate = transmitRate }
+        if let laddr4 { usage.laddr.v4 = laddr4 }
+        if let laddr6 { usage.laddr.v6 = laddr6 }
+        self.usage = usage
+
         return Bandwidth(upload: totalUpload, download: totalDownload)
     }
     
@@ -523,20 +546,17 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate {
         return output
     }
     
-    private func getLocalIP(_ pointer: UnsafeMutablePointer<ifaddrs>) {
-        guard let ifaAddr = pointer.pointee.ifa_addr else { return }
+    private func getLocalIP(_ pointer: UnsafeMutablePointer<ifaddrs>) -> (family: UInt8, value: String)? {
+        guard let ifaAddr = pointer.pointee.ifa_addr else { return nil }
         var addr = ifaAddr.pointee
-        guard addr.sa_family == UInt8(AF_INET) || addr.sa_family == UInt8(AF_INET6) else { return}
-        
+        guard addr.sa_family == UInt8(AF_INET) || addr.sa_family == UInt8(AF_INET6) else { return nil }
+
         var ip = [CChar](repeating: 0, count: Int(NI_MAXHOST))
         getnameinfo(&addr, socklen_t(addr.sa_len), &ip, socklen_t(ip.count), nil, socklen_t(0), NI_NUMERICHOST)
-        
+
         let ipStr = String(cString: ip)
-        if addr.sa_family == UInt8(AF_INET) && !ipStr.isEmpty {
-            self.usage.laddr.v4 = ipStr
-        } else if addr.sa_family == UInt8(AF_INET6) && !ipStr.isEmpty {
-            self.usage.laddr.v6 = ipStr
-        }
+        guard !ipStr.isEmpty else { return nil }
+        return (family: addr.sa_family, value: ipStr)
     }
     
     private func getPublicIP() {
@@ -549,8 +569,7 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate {
         }
         
         DispatchQueue.global(qos: .userInitiated).async {
-            let response = syncShell("curl -s -4 https://api.mac-stats.com/ip")
-            if !response.isEmpty, let data = response.data(using: .utf8),
+            if let data = self.fetchPublicIP(family: "-4"),
                let addr = try? JSONDecoder().decode(Addr_s.self, from: data) {
                 if let ip = addr.ipv4, self.isIPv4(ip) {
                     self.usage.raddr.v4 = ip
@@ -561,8 +580,7 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate {
             }
         }
         DispatchQueue.global(qos: .userInitiated).async {
-            let response = syncShell("curl -s -6 https://api.mac-stats.com/ip")
-            if !response.isEmpty, let data = response.data(using: .utf8),
+            if let data = self.fetchPublicIP(family: "-6"),
                let addr = try? JSONDecoder().decode(Addr_s.self, from: data) {
                 if let ip = addr.ipv6, !self.isIPv4(ip) {
                     self.usage.raddr.v6 = ip
@@ -572,6 +590,24 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate {
                 }
             }
         }
+    }
+
+    // curl is spawned directly (no /bin/sh wrapper): -4/-6 force the address family,
+    // which URLSession cannot do, and both public addresses are wanted
+    private func fetchPublicIP(family: String) -> Data? {
+        let task = Process()
+        task.launchPath = "/usr/bin/curl"
+        task.arguments = ["-s", family, "https://api.mac-stats.com/ip"]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        do {
+            try task.run()
+        } catch {
+            return nil
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        task.waitUntilExit()
+        return data.isEmpty ? nil : data
     }
     
     private func getBytesInfo(_ pointer: UnsafeMutablePointer<ifaddrs>) -> (upload: Int64, download: Int64)? {

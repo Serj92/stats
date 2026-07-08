@@ -55,20 +55,22 @@ public class Store {
         self.setValue(nil, for: key)
     }
     
-    public func bool(key: String, defaultValue value: Bool) -> Bool {
-        return self.getValue(for: key, type: Bool.self) ?? value
+    // defaultValue is @autoclosure so computed defaults (e.g. a configd lookup)
+    // are only evaluated when the key is actually missing
+    public func bool(key: String, defaultValue value: @autoclosure () -> Bool) -> Bool {
+        return self.getValue(for: key, type: Bool.self) ?? value()
     }
-    
-    public func string(key: String, defaultValue value: String) -> String {
-        return self.getValue(for: key, type: String.self) ?? value
+
+    public func string(key: String, defaultValue value: @autoclosure () -> String) -> String {
+        return self.getValue(for: key, type: String.self) ?? value()
     }
-    
-    public func int(key: String, defaultValue value: Int) -> Int {
-        return self.getValue(for: key, type: Int.self) ?? value
+
+    public func int(key: String, defaultValue value: @autoclosure () -> Int) -> Int {
+        return self.getValue(for: key, type: Int.self) ?? value()
     }
-    
-    public func array(key: String, defaultValue value: [Any]) -> [Any] {
-        return self.getValue(for: key, type: [Any].self) ?? value
+
+    public func array(key: String, defaultValue value: @autoclosure () -> [Any]) -> [Any] {
+        return self.getValue(for: key, type: [Any].self) ?? value()
     }
     
     public func data(key: String) -> Data? {
