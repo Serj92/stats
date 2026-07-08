@@ -4,6 +4,50 @@
 
 ---
 
+## 2026-07-08 — перф-проход №2 + v3.0.6 → v3.0.7 (катч-ап, 3 из 4)
+
+Две части в одной сессии: сначала закоммичен висевший в рабочем дереве второй проход по производительности, затем поверх него подтянут v3.0.7.
+
+### Часть 1 — второй перф-проход (коммит `2d74b940`)
+
+Продолжение оптимизации от 29.06 тем же принципом (срезать посекундную работу readers + per-frame аллокации). Был **несохранённым** в рабочем дереве — закоммичен перед синком (иначе терялся при cherry-pick, как с хвостами 28.06). Что вошло:
+- **GPU** (`reader.swift`): кэш io-хэндлов акселераторов, точечное чтение `PerformanceStatistics`/`AGCInfo` через `IORegistryEntryCreateCFProperty` вместо `fetchIOService` каждый тик; re-resolve при устаревшем хэндле (eGPU), release/`deinit`.
+- **CPU** (`readers.swift`): `getloadavg()` вместо fork/exec `/usr/bin/uptime` каждые 15с; (`popup`+`portal`) кэш `coreTypeByID` — O(1) вместо O(cores²)-`first(where:)`.
+- **Disk** (`readers.swift`): точечное чтение `Statistics`; **фикс утечек io-хэндлов** (release промежуточных parent в `getDeviceIOParent`, release `media`).
+- **Net** (`readers.swift`): резолв `interfaceID`/`CWInterface` раз на тик; один get-modify-set `usage`. (`portal`/`popup`/`Speed.swift`) кэш настроек Store, обновление по новому нотифайку `.networkChartSettings` вместо чтения на тик/draw.
+- **SMC** (`smc.swift`): негативный кэш отсутствующих ключей (`missingKeys`); error-`print` под `#if DEBUG`.
+- **Charts**: кэш `NSGradient` по цвету (Column), O(1) gap-check через `lastPointTs` (Line).
+- `DB.swift`: in-place аксессоры (убран COW-копия словаря + двойной `queue.sync` на insert), общий `JSONEncoder/Decoder`. `Store.swift`: `@autoclosure` defaults. `process.swift`: иконка/тултип только при смене pid. `Logger.swift`: общий `DateFormatter`. `SystemStats.swift`: ленивый `MQTTManager`. `AppDelegate.swift`: key-monitor ставится только при заданном popup-шорткате (`.keyboardShortcutChanged`).
+- Массово `.display()` → `needsDisplay` по виджетам/попапам/чартам.
+- Плюс фича: тумблер **«Max fan speed»** в CPU-попапе (мост к `fun-fan-control`, пишет флаг-файл; EN/RU/UK).
+
+⚠️ **Новые локальные расхождения — пережить при следующем rebase**: файлы 29.06 плюс `DB.swift`, `Store.swift`, `process.swift`, `SystemStats.swift`, `GPU/reader.swift`, `Net/{portal,popup,readers}.swift`, `AppDelegate.swift`, `Kit/module/popup.swift`.
+
+### Часть 2 — v3.0.6 → v3.0.7 (взяли 3 из 4)
+
+`v3.0.6..v3.0.7` = 4 коммита (3 содержательных + бамп `223a2d04`). Метод — cherry-pick `-x` в хронологии поверх перф-коммита.
+
+**Взято:**
+- `a3f7a40a` (было `0b847238`) — мелкие улучшения виджетов (BarChart/LineChart/Mini/Stack/widget/types). 3-way свёл **чисто**.
+- `66173683` (было `f2b05710`) — фикс цветовых констант. **Конфликт** `CPU/portal.swift`: их фикс чинит реальный баг — `sCoresColor` читал `eCoresColorState` вместо `sCoresColorState`. Взял их фикс + сохранил наш `coreTypeByID`. (В `CPU/popup.swift` этот баг уже был исправлен ранее — не трогали.)
+- `34a89e9c` (было `1c87299f`, #3407) — **тумблер ATA SMART** (по умолчанию выкл., «проблемы драйверов»): гейт `if self.ATASMART` на `getATASMART`, retry `SMARTReadData` через `smartEnableAttempted`, overflow-safe умножение LBA, свитч в `Disk/settings.swift`, строка в 40 языках. **Конфликт** `Disk/readers.swift` (только блок свойств) — добавил их `smartEnableAttempted` рядом с нашими `session/smartCache/smartCacheTTL`; авто-слияние само наложило гейт/retry поверх нашего cache-враппера и leak-фиксов (проверено grep'ом — и то, и другое на месте). **Конфликт** 2× `Info.plist` — build `813` vs `819`, взял **819**.
+
+**Пропущено:** `223a2d04` (бамп 3.0.7 — форк ведёт свою нумерацию; версию подняли вручную).
+
+**Версия (коммит `428b87c4`).** `MARKETING_VERSION 3.0.6 → 3.0.7` (2 строки pbxproj, Debug+Release главного таргета) + `Widgets/Info.plist` ShortVersionString `3.0.6 → 3.0.7` (билд-фаза строки 2128 всё равно перезапишет его из `MARKETING_VERSION` + CFBundleVersion из `Stats/Info.plist`, но исходник держим совпадающим, чтобы билд не давал лишний dirty). CFBundleVersion → **819**.
+
+**i18n.** Строка ATA пришла с готовыми ru/uk («ATA SMART данные» / «ATA SMART дані») — добор не нужен. Наша «Max fan speed» цела.
+
+**Сборка.** Debug (compile-check, без подписи) — **BUILD SUCCEEDED**, 0 ошибок, наши файлы реально перекомпилированы (200 `SwiftCompile`). Release под личным сертификатом — **BUILD SUCCEEDED**; app + SMC-хелпер оба `TeamIdentifier=T5V6W6793A`, версия 3.0.7 (819).
+
+**Деплой (2026-07-08).** Бэкап установленной **3.0.6/813** → `/tmp/Stats-backup.app`; `ditto` в `/Applications`. Проверено: SHA-256 бинаря build == installed (`eb8ca0ac…`), `codesign --verify --deep --strict` зелёный, `TeamIdentifier=T5V6W6793A`, версия **3.0.7 (819)**, приложение поднялось и не упало. Кулерами не управляем → админ-пароль на SMC-хелпер не запрашивался.
+
+**Откат:** ветка `backup/local-build-v3.0.6` (git) + `/tmp/Stats-backup.app` (бинарь 813).
+
+**Хвост.** На `upstream/master` после v3.0.7 висят 3 невышедших коммита: `f121597c` (обёртка переменных виджетов в `sync` — защита от гонки данных, пересекается с нашим перф-кодом виджетов), `7ba5282d` (#3408 interface details при process-based), `8dcfd55e` (#3403 Ethernet в нативном виджете). Не брали (не в релизе) — кандидаты на следующий добор, в первую очередь data-race `f121597c`.
+
+---
+
 ## 2026-07-05 — v3.0.5 → v3.0.6 (катч-ап, взяли 7 из 8, пропустили Preset-мастер)
 
 Обычный патч-релиз, не мажор. `v3.0.5..v3.0.6` = 9 коммитов (8 содержательных + бамп версии `f2654977`). Метод: cherry-pick `-x` в хронологическом порядке поверх вершины `local/build`, не merge — чтобы точечно выкинуть один коммит и сохранить авторство upstream.
