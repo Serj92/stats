@@ -44,7 +44,16 @@
 
 **Откат:** ветка `backup/local-build-v3.0.6` (git) + `/tmp/Stats-backup.app` (бинарь 813).
 
-**Хвост.** На `upstream/master` после v3.0.7 висят 3 невышедших коммита: `f121597c` (обёртка переменных виджетов в `sync` — защита от гонки данных, пересекается с нашим перф-кодом виджетов), `7ba5282d` (#3408 interface details при process-based), `8dcfd55e` (#3403 Ethernet в нативном виджете). Не брали (не в релизе) — кандидаты на следующий добор, в первую очередь data-race `f121597c`.
+### Часть 3 — добор 3 невышедших после v3.0.7 (тем же днём)
+
+Догнали `v3.0.7..upstream/master` (3 коммита, все невышедшие). Cherry-pick `-x`:
+- `486ed396` (было `f121597c`) — **обёртка переменных виджетов в `self.queue.sync`** (защита от гонки, 9 виджетов). Конфликт только `Memory.swift` `setValue`: совместил наш redraw-skip guard с их `queue.sync` по их же паттерну из `setPressure` (compare-and-set внутри `queue.sync { () -> Bool }` + `guard updated`). `queue` — из базового `WidgetWrapper`. Остальные 8 виджетов слились чисто.
+- `bd28de33` (было `7ba5282d`, #3408) — **interface details при process-based**: `read()` в process-ветке зовёт новый `readInterfaceStatus()`; логика интерфейса вынесена в `updateInterfaceInfo()`; `getBytesInfo()` переписан с per-entry `AF_LINK ifa_data` на **`sysctl NET_RT_IFLIST2` по индексу** (надёжнее). Конфликты `portal.swift` + `readers.swift` — оба на нашем перф-коде. Резолв: **уступили наши per-tick микро-оптимизации Net-ридера** (единый get-set `usage`, hoisting `CWInterface`) в пользу апстримовой структуры — тут это копейки, корректность важнее. Сохранили наш `getLocalIP`-возврат (адаптировали `updateInterfaceInfo`) и `fetchPublicIP`. В `portal.usageCallback` убрали задвоенный `addValue` (апстрим вынес его наверх) и не тащили обратно per-tick `setBase/…` (у нас это в `load()` + `settingsUpdated()`).
+- `5490339d` (было `8dcfd55e`, #3403) — Ethernet в нативном виджете, 1 строка, **чисто**.
+
+**Версия/сборка/деплой.** `CFBundleVersion 819 → 820` (MARKETING_VERSION остался 3.0.7 — фиксы невышедшие). Debug compile-check зелёный (0 ошибок); Release под подписью — app+helper `T5V6W6793A`. Бэкап 819 → `/tmp/Stats-backup.app`, `ditto` в `/Applications`, SHA build==installed (`421b2850…`), `codesign --verify --deep --strict` зелёный, версия **3.0.7 (820)**, поднялось и не упало. После этого `upstream/master` **вычерпан полностью** (после `8dcfd55e` ничего нет).
+
+⚠️ **На будущее (rebase):** наш Net-ридер стал ближе к апстриму (микро-опт уступлены); в виджетах теперь их `queue.sync` поверх наших `needsDisplay`. Точка отката для Части 3 — `git reset --hard 0d511257` (или `origin/local/build` до пуша).
 
 ---
 
