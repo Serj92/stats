@@ -14,3 +14,6 @@ SMC/smc
 
 Cartfile.resolved
 web
+
+# Claude Code local config
+.claude/
