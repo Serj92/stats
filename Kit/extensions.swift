@@ -710,7 +710,7 @@ public class KeyboardShartcutView: NSStackView {
     private var value: [UInt16] = []
     private var interaction: Bool = false
     private var keyMonitor: Any?
-    
+
     public init(callback: @escaping (_ value: [UInt16]) -> Void, value: [UInt16]) {
         self.callback = callback
         self.value = value
@@ -733,7 +733,7 @@ public class KeyboardShartcutView: NSStackView {
         self.valueField = valueField
         self.startButton = startButton
         self.stopButton = stopButton
-        
+
         self.keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
             self?.handleKeyEvent(event)
             return event
@@ -749,7 +749,7 @@ public class KeyboardShartcutView: NSStackView {
             NSEvent.removeMonitor(keyMonitor)
         }
     }
-    
+
     @objc private func startListening() {
         guard AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary) else { return }
         if let btn = self.stopButton {
