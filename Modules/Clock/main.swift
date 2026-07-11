@@ -58,31 +58,31 @@ public struct Clock_t: Codable {
         set { Store.shared.set(key: "clock_\(self.id)_popupState", value: newValue) }
     }
     
-    // DateFormatter is expensive to build; cache one per (calendar, tz, format) combo.
-    // The cache key fully describes the formatter, so it never needs invalidation.
-    private static let formatterLock = NSLock()
+    public func formatted() -> String {
+        Clock_t.formatter(format: self.format, tz: self.tz, calendarKey: self.calendar).string(from: self.value ?? Date())
+    }
+
+    private static let formattersQueue = DispatchQueue(label: "eu.exelban.Stats.Clock.formatters")
     private static var formatters: [String: DateFormatter] = [:]
 
-    public func formatted() -> String {
-        let key = "\(self.calendar)|\(self.tz)|\(self.format)"
+    private static func formatter(format: String, tz: String, calendarKey: String) -> DateFormatter {
+        let timeZone = TimeZone(from: tz)
+        let key = "\(calendarKey)|\(timeZone.identifier)|\(format)"
 
-        Clock_t.formatterLock.lock()
-        defer { Clock_t.formatterLock.unlock() }
+        return Clock_t.formattersQueue.sync {
+            if let formatter = Clock_t.formatters[key] {
+                return formatter
+            }
 
-        let formatter: DateFormatter
-        if let cached = Clock_t.formatters[key] {
-            formatter = cached
-        } else {
-            formatter = DateFormatter()
-            var calendar = Clock.calendar(from: self.calendar)
-            calendar.timeZone = TimeZone(from: self.tz)
+            let formatter = DateFormatter()
+            var calendar = Clock.calendar(from: calendarKey)
+            calendar.timeZone = timeZone
             formatter.calendar = calendar
-            formatter.dateFormat = self.format
-            formatter.timeZone = TimeZone(from: self.tz)
+            formatter.dateFormat = format
+            formatter.timeZone = timeZone
             Clock_t.formatters[key] = formatter
+            return formatter
         }
-
-        return formatter.string(from: self.value ?? Date())
     }
 }
 
@@ -94,14 +94,25 @@ public class Clock: Module {
     private var reader: ClockReader?
     
     static var list: [Clock_t] {
-        if let objects = Store.shared.data(key: "\(ModuleType.clock.stringValue)_list") {
-            let decoder = JSONDecoder()
-            if let objectsDecoded = try? decoder.decode(Array.self, from: objects) as [Clock_t] {
-                return objectsDecoded
-            }
+        guard let objects = Store.shared.data(key: "\(ModuleType.clock.stringValue)_list") else {
+            return [Clock.local]
         }
-        return [Clock.local]
+        
+        return Clock.listQueue.sync {
+            if let cached = Clock.cachedList, cached.raw == objects {
+                return cached.list
+            }
+            
+            let decoder = JSONDecoder()
+            guard let objectsDecoded = try? decoder.decode(Array.self, from: objects) as [Clock_t] else {
+                return [Clock.local]
+            }
+            Clock.cachedList = (objects, objectsDecoded)
+            return objectsDecoded
+        }
     }
+    private static let listQueue = DispatchQueue(label: "eu.exelban.Stats.Clock.list")
+    private static var cachedList: (raw: Data, list: [Clock_t])? = nil
     
     public init() {
         self.portalView = Portal(.clock, list: Clock.list)

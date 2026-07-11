@@ -32,13 +32,7 @@ public class DB {
     private func setValue(_ value: Codable, for key: String) {
         self.queue.sync { self._values[key] = value }
     }
-    private func writeTS(for key: String) -> Date? {
-        self.queue.sync { self._writeTS[key] }
-    }
-    private func setWriteTS(_ date: Date, for key: String) {
-        self.queue.sync { self._writeTS[key] = date }
-    }
-    
+
     init() {
         let fileManager = FileManager.default
         let supportPath = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!.appendingPathComponent("Stats")
@@ -91,10 +85,19 @@ public class DB {
             self.lldb?.insert("\(key)@\(Date().currentTimeSeconds())", value: str)
         }
 
-        if !force, let ts = self.writeTS(for: key), (Date().timeIntervalSince1970-ts.timeIntervalSince1970) < 30 { return }
+        // Compare-and-set the write throttle atomically: checking writeTS and setting it in two
+        // separate queue.sync calls leaves a window where concurrent inserts both pass the guard.
+        let now = Date()
+        let shouldWrite: Bool = self.queue.sync {
+            if !force, let ts = self._writeTS[key], (now.timeIntervalSince1970-ts.timeIntervalSince1970) < 30 {
+                return false
+            }
+            self._writeTS[key] = now
+            return true
+        }
+        guard shouldWrite else { return }
 
         self.lldb?.insert(key, value: str)
-        self.setWriteTS(Date(), for: key)
     }
 
     public func findOne<T: Decodable>(_ dynamicType: T.Type, key: String) -> T? {
