@@ -40,6 +40,19 @@
 
 **Откат:** ветка `backup/local-build-pre-v3.0.8` (git) + `/tmp/Stats-backup.app` (бинарь 820).
 
+### Часть 3 — системная сериализация `read()` (тем же днём, билд 822)
+
+Развитие фикса краша из Части 1. `readIfIdle()`-guard прикрывал только **плановый** путь (`start()` + репитер), а колбэки настроек во всех модулях зовут `read()` **напрямую** с фоновой очереди — мимо guard'а. Аудит показал тот же класс гонки, что ронял Net, ещё в двух ридерах (у пользователя оба модуля активны):
+- **CPU `LoadReader`** (`readers.swift:52`) — `CPUUsageLock` прикрывает только чтение `prevCpuInfo`; `vm_deallocate` + переприсваивание указателя идут **вне лока** → наложение двух `read()` = use-after-free на сырой mach-памяти.
+- **Disk `CapacityReader`** — `smartCache`/`purgableSpace`/`smartTotals` (обычные `Dictionary`) + `self.list` мутируются без лока.
+- RAM `ProcessReader` — буфера между вызовами нет, безопасен.
+
+**Фикс.** Публичный `Reader.requestRead()` — диспатчит на фоновую очередь и идёт через `readIfIdle()`. Все **19** прямых `read()` в `Modules/*/main.swift` переведены на него (заодно убраны ручные `DispatchQueue.global.async`-обёртки). Теперь `read()` любого ридера не может пересечься сам с собой при любом входе (план + настройки) → CPU-UAF и Disk-гонка закрыты без пер-ридерных локов. У CPU `LoadReader`/Disk `CapacityReader` своих `self.read()` нет (проверено grep'ом), так что покрытие полное. Компромисс: refresh по настройке во время идущего чтения отбрасывается, подхватится следующим тиком (≤ интервал).
+⚠️ **Не тронуто:** внутри-ридерные setup-`self.read()` (Net `ConnectivityReader.prepare` `readers.swift:1012`, Battery) — одноразовые, на **других** ридерах; конвертация меняла бы порядок setup. Остаточный низкий риск — на будущее.
+Net `ProcessReader` оставил и свой внутренний guard (belt-and-suspenders для реально падавшего ридера).
+
+**Сборка/деплой (2026-07-15).** Debug + Release зелёные; app+helper `T5V6W6793A`, **3.0.8 (822)**. Бэкап 821 → `/tmp/Stats-backup-821.app`, `ditto` в `/Applications`, SHA build==installed. ⚠️ `open` сразу после `rm -rf`+`ditto` дал «executable is missing» — кэш LaunchServices; лечится `lsregister -f /Applications/Stats.app` (бинарь был на месте). Проверено: CPU-попап live, значения обновляются (`LoadReader` гоняется без краша), все модули в меню-баре живые, крашей нет. **Точка отката:** `git reset --hard e47bfafb` + `/tmp/Stats-backup-821.app`.
+
 ---
 
 ## 2026-07-08 — перф-проход №2 + v3.0.6 → v3.0.7 (катч-ап, 3 из 4)
