@@ -729,8 +729,13 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate {
 
 public class ProcessReader: Reader<[Network_Process]> {
     private let title: String = "Network"
+
+    // read() runs on the reader queue, but the settings callback calls it directly from a
+    // background queue, so both the in-flight flag and the previous sample need a lock.
+    private let lock = NSLock()
+    private var reading: Bool = false
     private var previous: [Network_Process] = []
-    
+
     private var numberOfProcesses: Int {
         get {
             return Store.shared.int(key: "\(self.title)_processes", defaultValue: 8)
@@ -745,7 +750,21 @@ public class ProcessReader: Reader<[Network_Process]> {
         if self.numberOfProcesses == 0 {
             return
         }
-        
+
+        self.lock.lock()
+        if self.reading {
+            self.lock.unlock()
+            return
+        }
+        self.reading = true
+        self.lock.unlock()
+
+        defer {
+            self.lock.lock()
+            self.reading = false
+            self.lock.unlock()
+        }
+
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/nettop")
         task.arguments = ["-P", "-L", "1", "-n", "-k", "time,interface,state,rx_dupe,rx_ooo,re-tx,rtt_avg,rcvsize,tx_win,tc_class,tc_mgt,cc_algo,P,C,R,W,arch"]
@@ -825,32 +844,38 @@ public class ProcessReader: Reader<[Network_Process]> {
             list.append(process)
         }
         
+        self.lock.lock()
+        let previous = self.previous
+        self.lock.unlock()
+
         var processes: [Network_Process] = []
-        if self.previous.isEmpty {
-            self.previous = list
+        if previous.isEmpty {
             processes = list
         } else {
-            self.previous.forEach { (pp: Network_Process) in
+            previous.forEach { (pp: Network_Process) in
                 if let i = list.firstIndex(where: { $0.pid == pp.pid }) {
                     let p = list[i]
-                    
+
                     var download = p.download - pp.download
                     var upload = p.upload - pp.upload
                     let time = download == 0 && upload == 0 ? pp.time : Date()
                     list[i].time = time
-                    
+
                     if download < 0 {
                         download = 0
                     }
                     if upload < 0 {
                         upload = 0
                     }
-                    
+
                     processes.append(Network_Process(pid: p.pid, name: p.name, time: time, download: download, upload: upload))
                 }
             }
-            self.previous = list
         }
+
+        self.lock.lock()
+        self.previous = list
+        self.lock.unlock()
         
         processes.sort {
             let firstMax = max($0.download, $0.upload)

@@ -80,9 +80,12 @@ open class Reader<T: Codable>: NSObject, ReaderInternal_p {
     }
     
     private var lastDBWrite: Date? = nil
-    
+
     private var alignWorkItem: DispatchWorkItem?
     private let alignQueue = DispatchQueue(label: "eu.exelban.readerAlignQueue")
+
+    private let readLock = NSLock()
+    private var reading: Bool = false
     
     public init(_ module: ModuleType, popup: Bool = false, preview: Bool = false, history: Bool = false, callback: @escaping (T?) -> Void = {_ in }) {
         self.popup = popup
@@ -131,28 +134,49 @@ open class Reader<T: Codable>: NSObject, ReaderInternal_p {
     open func read() {}
     open func setup() {}
     open func terminate() {}
-    
+
+    // read() is not reentrant: readers keep state between samples (previous values, buffers).
+    // The repeater and the dispatches in start() fire on different queues, and a read() slower
+    // than the interval overlaps the next tick, so drop a scheduled read while one is in flight.
+    private func readIfIdle() {
+        self.readLock.lock()
+        if self.reading {
+            self.readLock.unlock()
+            return
+        }
+        self.reading = true
+        self.readLock.unlock()
+
+        defer {
+            self.readLock.lock()
+            self.reading = false
+            self.readLock.unlock()
+        }
+
+        self.read()
+    }
+
     open func start() {
         if (self.popup || self.preview) && self.locked {
             DispatchQueue.global(qos: .background).async {
-                self.read()
+                self.readIfIdle()
             }
             return
         }
-        
+
         if !self.initlizalized {
             if self.alignToSecondBoundary {
                 self.startAlignedRepeater()
             } else {
                 self.startNormalRepeater()
-                DispatchQueue.global(qos: .background).async { self.read() }
+                DispatchQueue.global(qos: .background).async { self.readIfIdle() }
                 self.repeatTask?.start()
             }
             self.initlizalized = true
         } else {
             self.repeatTask?.start()
         }
-        
+
         self.active = true
     }
     
@@ -206,10 +230,10 @@ open class Reader<T: Codable>: NSObject, ReaderInternal_p {
         }
         
         self.repeatTask = Repeater(seconds: Int(interval)) { [weak self] in
-            self?.read()
+            self?.readIfIdle()
         }
     }
-    
+
     private func startAlignedRepeater() {
         guard let interval = self.interval, self.repeatTask == nil else { return }
         
@@ -219,10 +243,10 @@ open class Reader<T: Codable>: NSObject, ReaderInternal_p {
         
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            
-            self.read()
+
+            self.readIfIdle()
             self.repeatTask = Repeater(seconds: Int(interval)) { [weak self] in
-                self?.read()
+                self?.readIfIdle()
             }
             self.repeatTask?.start()
         }
