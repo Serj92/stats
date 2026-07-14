@@ -281,19 +281,17 @@ public class Disk: Module {
         
         self.settingsView.selectedDiskHandler = { [weak self] value in
             self?.selectedDisk = value
-            self?.capacityReader?.read()
+            self?.capacityReader?.requestRead()
         }
         self.settingsView.callback = { [weak self] in
-            self?.capacityReader?.read()
+            self?.capacityReader?.requestRead()
         }
         self.settingsView.setInterval = { [weak self] value in
             self?.capacityReader?.setInterval(value)
         }
         self.settingsView.callbackWhenUpdateNumberOfProcesses = { [weak self] in
             self?.popupView.numberOfProcessesUpdated()
-            DispatchQueue.global(qos: .background).async {
-                self?.processReader?.read()
-            }
+            self?.processReader?.requestRead()
         }
         
         self.setReaders([self.capacityReader, self.activityReader, self.processReader])

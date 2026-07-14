@@ -149,13 +149,13 @@ public class GPU: Module {
         
         self.settingsView.selectedGPUHandler = { [weak self] value in
             self?.selectedGPU = value
-            self?.infoReader?.read()
+            self?.infoReader?.requestRead()
         }
         self.settingsView.setInterval = { [weak self] value in
             self?.infoReader?.setInterval(value)
         }
         self.settingsView.callback = { [weak self] in
-            self?.infoReader?.read()
+            self?.infoReader?.requestRead()
         }
         
         self.setReaders([self.infoReader])

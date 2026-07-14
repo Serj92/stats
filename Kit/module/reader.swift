@@ -156,6 +156,18 @@ open class Reader<T: Codable>: NSObject, ReaderInternal_p {
         self.read()
     }
 
+    // Guarded entry point for callers outside the scheduler (e.g. settings callbacks that
+    // want an immediate refresh). Runs off the main thread and serialises with the repeater
+    // through readIfIdle(), so a manual read can never overlap a scheduled read of the same
+    // reader — which is what corrupted per-reader state (Net's `previous`, CPU's prevCpuInfo
+    // pointer, Disk's caches). If a read is already in flight the refresh is skipped and the
+    // next scheduled tick picks it up.
+    public func requestRead() {
+        DispatchQueue.global(qos: .background).async { [weak self] in
+            self?.readIfIdle()
+        }
+    }
+
     open func start() {
         if (self.popup || self.preview) && self.locked {
             DispatchQueue.global(qos: .background).async {
