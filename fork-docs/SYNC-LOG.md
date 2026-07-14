@@ -4,6 +4,44 @@
 
 ---
 
+## 2026-07-15 — фикс краша Net + v3.0.7 → v3.0.8
+
+Началось с диагностики периодических крашей (два .ips за 12–13.07, оба на билде 820) → фикс гонки в Net, затем синк v3.0.8.
+
+### Часть 1 — фикс краша `ProcessReader.read()` (коммит `8ab339c7`)
+
+Оба краша — в `Modules/Net/readers.swift:833-838` (`EXC_BAD_ACCESS` в `list.firstIndex`, и `arithmetic overflow` на `p.upload - pp.upload`). Причина — **гонка данных на `self.previous`**: `read()` итерирует и переприсваивает его без синхронизации, а вызывается из двух потоков одновременно (диспатч в `Reader.start()` vs тик `Repeater`, плюс колбэк настроек зовёт `read()` напрямую с фоновой очереди).
+- `Kit/module/reader.swift` — новый приватный `readIfIdle()` (NSLock + флаг `reading`); все плановые вызовы (`start()`, оба репитера) идут через него → второй вызов, пока первый в полёте, отбрасывается.
+- `Modules/Net/readers.swift` — `ProcessReader` получил свой guard (он зовётся и вне планировщика) + `previous` читается снапшотом и публикуется под локом.
+Проверено: попап Net жив, `nettop` в один инстанс (fast-poll 50мс/20с — max 1).
+
+### Часть 2 — v3.0.7 → v3.0.8 (взяли 10 из 11)
+
+`8dcfd55e..upstream/master` = 11 коммитов (10 содержательных + бамп `08121bfd`). Метод — cherry-pick `-x` в хронологии. ⚠️ После пиков `HEAD..upstream/master` показывает **всю** историю (хеши разошлись) — ориентироваться на исходный список от `8dcfd55e`, не на `..upstream/master`.
+
+**Взято:** `68b7e5fe` (#3414 m5 super cores), `0dd8835a` (#3362 spacer), `0830f5df` (#3395 status bar constraint), `efc4ae3d` (#3396 disk details changed), `50ca9459` (tests), `f88af61c` (#3385 unit multiplier), `425a15bc` (async improvements + deregister), `be597ceb` (#3432 zero SSD), `c3fb1fee` (lang), `8ab8e1ef` (#3437 spike mechanism). **Пропущено:** `08121bfd` (бамп 3.0.8).
+
+**Конфликты (все с нашим перф-кодом):**
+- **`reader.swift`** (`425a15bc`) — апстрим переписал жизненный цикл ридера (`alignWorkItem` → `alignGeneration` + `alignQueue.sync` во всех методах). Взял их структуру, **наш `readIfIdle()` guard сохранён** и подставлен вместо их `self.read()` во всех точках (оба репитера + aligned async). Наш гард и их async-фиксы совместимы и дополняют друг друга.
+- **`DB.swift`** (`425a15bc`) — оставили наши shared `encoder/decoder` + аксессоры `setValue/value(for:)`; **взяли их атомарный compare-and-set** троттла записи (закрывает гонку между проверкой и установкой `writeTS`, которую наши два раздельных `queue.sync` оставляли открытой). Удалили ставшие мёртвыми `writeTS(for:)`/`setWriteTS`.
+- **`Clock/main.swift`** (`425a15bc`) — и мы, и апстрим кэшируем `DateFormatter`. **Взял апстримовый** (`formattersQueue.sync`, ключ по `timeZone.identifier`) — каноничнее, меньше дрейфа; выкинул наш `NSLock`-вариант.
+- **`Sensors/readers.swift`** (`425a15bc`) — апстрим перевёл `read()` на **локальный снапшот `var sensors` + атомарный `self.list.update {}`** (потокобезопасность — тот же класс фикса). **Уступили наш `sensorIndex` (O(1) кэш) целиком** — `git checkout --theirs`. Корректность > микро-опт; к тому же **Sensors у пользователя выключен** (`Sensors_state=0`), в рантайме код не исполняется. ⚠️ Если Sensors включат и перф важен — переприменить `sensorIndex`.
+- **`CPU/readers.swift`** (`68b7e5fe`) — ложный конфликт: их правка тут = `launchPath`→`executableURL` для `uptime`, а мы `uptime` убрали (`getloadavg`). Оставили наш `getloadavg`; реальные хунки коммита (super cores `/Double(eCores.count)`, `channels.first`, `pmset`) легли. Проверено попапом: load avg 4.6/7.5/5.9, E/P-частоты раздельно.
+- **`Disk/readers.swift`** (`efc4ae3d`) — 3 конфликтных блока (SMART-walk, `driveDetails` media, `getDeviceIOParent`) = наши leak-фиксы vs их. Оставили наши; фича коммита (`driveIdentityChanged` + новые SMART-поля + release родителя на путях удаления) в неконфликтных хунках легла сама.
+- **`extensions.swift`** (`0dd8835a`) — наш перф уже добавил тот же `keyMonitor`+`deinit`, что и их фикс; убрали дубль.
+
+**i18n.** Апстрим `c3fb1fee` добавил `"Deregister text"`, но забыл сам ключ `"Deregister"` (кнопка + заголовок алерта) → не-EN видели англ. fallback. Добрали `"Deregister"` в EN/RU/UK (коммит `c30444af`). Наша `"Max fan speed"` цела.
+
+**Версия (коммит `4f44a0f1`).** `MARKETING_VERSION 3.0.7 → 3.0.8`; `CFBundleVersion → 821` (**своя нумерация форка от 820**; апстримовы инкременты, притащенные пиками в Info.plist до 823, перебиты). Апстрим v3.0.8 = 825.
+
+**Сборка.** Debug compile-check (без подписи) — **BUILD SUCCEEDED**, 0 ошибок/unused. Release под личным сертификатом — **BUILD SUCCEEDED**; app + SMC-хелпер оба `TeamIdentifier=T5V6W6793A`, версия 3.0.8 (821).
+
+**Деплой (2026-07-15).** Бэкап установленной **820** → `/tmp/Stats-backup.app`; `ditto` в `/Applications`. SHA бинаря build==installed, `codesign --verify --deep --strict` зелёный, версия **3.0.8 (821)**, поднялось. Проверены попапами **все 5 включённых модулей** (Net/Disk/CPU/RAM/GPU) — значения живые, крашей нет. Кулерами не управляем → пароль на SMC-хелпер не спрашивался.
+
+**Откат:** ветка `backup/local-build-pre-v3.0.8` (git) + `/tmp/Stats-backup.app` (бинарь 820).
+
+---
+
 ## 2026-07-08 — перф-проход №2 + v3.0.6 → v3.0.7 (катч-ап, 3 из 4)
 
 Две части в одной сессии: сначала закоммичен висевший в рабочем дереве второй проход по производительности, затем поверх него подтянут v3.0.7.
