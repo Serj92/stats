@@ -382,7 +382,7 @@
 "Could not enable the fan helper" = "Could not enable the fan helper";
 "Open System Settings ▸ Login Items, make sure Stats is allowed in the background, then try again." = "Open System Settings ▸ Login Items, make sure Stats is allowed in the background, then try again.";
 "Fan value" = "Fan value";
-"Max fan speed" = "Max fan speed";
+"Fan speed 100%" = "Fan speed 100%";
 "Fan speed 50%" = "Fan speed 50%";
 "Fan speed 25%" = "Fan speed 25%";
 "Turn off fan" = "Turn off fan";

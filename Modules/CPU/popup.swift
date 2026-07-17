@@ -50,7 +50,7 @@ internal class Popup: PopupWrapper {
     // Manual fan-boost levels written to the fun-fan-control `boost` flag file. Ordered top-to-bottom
     // in the popup; single-select with the option to clear (temperature curve resumes control).
     private let fanControlLevels: [(level: Int, label: String)] = [
-        (100, "Max fan speed"),
+        (100, "Fan speed 100%"),
         (50, "Fan speed 50%"),
         (25, "Fan speed 25%")
     ]

@@ -382,7 +382,7 @@
 "Could not enable the fan helper" = "Could not enable the fan helper";
 "Open System Settings ▸ Login Items, make sure Stats is allowed in the background, then try again." = "Open System Settings ▸ Login Items, make sure Stats is allowed in the background, then try again.";
 "Fan value" = "Значення вентилятора";
-"Max fan speed" = "Максимальна швидкість вентиляторів";
+"Fan speed 100%" = "Швидкість вентиляторів 100%";
 "Fan speed 50%" = "Швидкість вентиляторів 50%";
 "Fan speed 25%" = "Швидкість вентиляторів 25%";
 "Turn off fan" = "Вимкнути вентилятор";
