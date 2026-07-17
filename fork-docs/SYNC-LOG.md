@@ -26,6 +26,8 @@
 **Сборка/деплой (2026-07-16).** Демон: `swift build -c release` зелёный, подписан, `codesign -R` матч; деплой `launchctl bootout`→копия бинаря→`bootstrap` (агент `com.serj.fancurved`). Stats: Release **BUILD SUCCEEDED**, app `T5V6W6793A`, `CFBundleVersion 822→823`; `ditto` поверх `/Applications/Stats.app`, подпись зелёная, перезапущен.
 **Проверка end-to-end** (обороты через `fancurved --status`, диапазон 2317–6800): база `~2317` (кривая 0%) → «25» `~3438` → «50» `~4560` → снятие `~2317`. Совпало с `min+pct·(max−min)` точь-в-точь. Файл после теста чист.
 
+**Правка build 824.** Ключ `"Max fan speed"` (100%) переименован в `"Fan speed 100%"` — единообразно с `"Fan speed 50/25%"`. Только Stats (демон не тронут), EN/RU/UK, бамп 823→824, пересобрано+передеплоено.
+
 ---
 
 ## 2026-07-15 — фикс краша Net + v3.0.7 → v3.0.8
