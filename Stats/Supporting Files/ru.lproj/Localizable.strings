@@ -383,6 +383,8 @@
 "Open System Settings ▸ Login Items, make sure Stats is allowed in the background, then try again." = "Open System Settings ▸ Login Items, make sure Stats is allowed in the background, then try again.";
 "Fan value" = "Значение вентилятора";
 "Max fan speed" = "Максимальная скорость вентиляторов";
+"Fan speed 50%" = "Скорость вентиляторов 50%";
+"Fan speed 25%" = "Скорость вентиляторов 25%";
 "Turn off fan" = "Выключить вентилятор";
 "You are going to turn off the fan. This is not recommended action that can damage your mac, are you sure you want to do that?" = "Вы собираетесь выключить вентилятор. Это не рекомендуемое действие, которое может сломать ваш Mac. Вы уверены, что хотите это сделать?";
 "Sensor threshold" = "Порог датчика";

@@ -47,7 +47,14 @@ internal class Popup: PopupWrapper {
         }
     }
     private let processHeight: CGFloat = 22
-    private let fanControlHeight: CGFloat = 22 + Constants.Popup.separatorHeight
+    // Manual fan-boost levels written to the fun-fan-control `boost` flag file. Ordered top-to-bottom
+    // in the popup; single-select with the option to clear (temperature curve resumes control).
+    private let fanControlLevels: [(level: Int, label: String)] = [
+        (100, "Max fan speed"),
+        (50, "Fan speed 50%"),
+        (25, "Fan speed 25%")
+    ]
+    private var fanControlHeight: CGFloat { CGFloat(22 * self.fanControlLevels.count) + Constants.Popup.separatorHeight }
 
     private var systemField: NSTextField? = nil
     private var userField: NSTextField? = nil
@@ -79,7 +86,7 @@ internal class Popup: PopupWrapper {
     private var chartPrefSection: PreferencesSection? = nil
     private var sliderView: NSView? = nil
     private var fanControlView: NSView? = nil
-    private var fanBoostSwitch: NSSwitch? = nil
+    private var fanBoostSwitches: [NSSwitch] = []
     
     private var lineChart: LineChartView? = nil
     private var columnChart: ColumnChartView? = nil
@@ -180,7 +187,7 @@ internal class Popup: PopupWrapper {
     
     public override func appear() {
         self.uptimeField?.stringValue = self.uptimeValue
-        self.fanBoostSwitch?.state = self.isFanBoostActive ? .on : .off
+        self.syncFanBoostSwitches()
         self.replay(self.loadCache, render: self.renderLoad)
         self.replay(self.temperatureCache, render: self.renderTemperature)
         self.replay(self.frequencyCache, render: self.renderFrequency)
@@ -362,8 +369,14 @@ internal class Popup: PopupWrapper {
     private var isFanControlInstalled: Bool {
         FileManager.default.fileExists(atPath: self.fancurvedDir.path)
     }
-    private var isFanBoostActive: Bool {
-        FileManager.default.fileExists(atPath: self.fanBoostURL.path)
+    // Current manual level decoded from the boost flag file: nil when the file is absent (curve in
+    // control), otherwise the written percentage. An empty file maps to 100% for backward
+    // compatibility with the original existence-only flag.
+    private var currentFanBoostLevel: Int? {
+        guard let data = try? Data(contentsOf: self.fanBoostURL) else { return nil }
+        let raw = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        if raw.isEmpty { return 100 }
+        return Int(raw)
     }
 
     private func initFanControl() -> NSView {
@@ -373,6 +386,7 @@ internal class Popup: PopupWrapper {
             return v
         }
 
+        self.fanBoostSwitches = []
         let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: self.fanControlHeight))
         view.heightAnchor.constraint(equalToConstant: view.bounds.height).isActive = true
         let separator = separatorView(localizedString("Fans"), origin: NSPoint(
@@ -383,24 +397,28 @@ internal class Popup: PopupWrapper {
         container.orientation = .vertical
         container.spacing = 0
 
-        let row: NSView = NSView(frame: NSRect(x: 0, y: 0, width: container.frame.width, height: 22))
-        row.heightAnchor.constraint(equalToConstant: row.bounds.height).isActive = true
+        let activeLevel = self.currentFanBoostLevel
+        for item in self.fanControlLevels {
+            let row: NSView = NSView(frame: NSRect(x: 0, y: 0, width: container.frame.width, height: 22))
+            row.heightAnchor.constraint(equalToConstant: row.bounds.height).isActive = true
 
-        let labelView: LabelField = LabelField(frame: NSRect(x: 0, y: (22-16)/2, width: row.frame.width - 60, height: 16), localizedString("Max fan speed"))
+            let labelView: LabelField = LabelField(frame: NSRect(x: 0, y: (22-16)/2, width: row.frame.width - 60, height: 16), localizedString(item.label))
 
-        let toggle = NSSwitch()
-        toggle.controlSize = .mini
-        toggle.state = self.isFanBoostActive ? .on : .off
-        toggle.target = self
-        toggle.action = #selector(self.toggleFanBoost)
-        toggle.sizeToFit()
-        toggle.frame = NSRect(x: row.frame.width - toggle.frame.width - 4, y: (22-toggle.frame.height)/2, width: toggle.frame.width, height: toggle.frame.height)
-        toggle.autoresizingMask = [.minXMargin]
-        self.fanBoostSwitch = toggle
+            let toggle = NSSwitch()
+            toggle.controlSize = .mini
+            toggle.tag = item.level
+            toggle.state = activeLevel == item.level ? .on : .off
+            toggle.target = self
+            toggle.action = #selector(self.toggleFanBoost)
+            toggle.sizeToFit()
+            toggle.frame = NSRect(x: row.frame.width - toggle.frame.width - 4, y: (22-toggle.frame.height)/2, width: toggle.frame.width, height: toggle.frame.height)
+            toggle.autoresizingMask = [.minXMargin]
+            self.fanBoostSwitches.append(toggle)
 
-        row.addSubview(labelView)
-        row.addSubview(toggle)
-        container.addArrangedSubview(row)
+            row.addSubview(labelView)
+            row.addSubview(toggle)
+            container.addArrangedSubview(row)
+        }
 
         view.addSubview(separator)
         view.addSubview(container)
@@ -408,11 +426,25 @@ internal class Popup: PopupWrapper {
         return view
     }
 
+    // Reflect the flag file onto the switches: at most one is on, matching the written level; none
+    // when the file is absent or holds an unrecognised value.
+    private func syncFanBoostSwitches() {
+        let level = self.currentFanBoostLevel
+        for toggle in self.fanBoostSwitches {
+            toggle.state = toggle.tag == level ? .on : .off
+        }
+    }
+
+    // Single-select with clear: turning a level on writes it and switches the others off; turning
+    // the active one off removes the flag file, handing control back to the temperature curve.
     @objc private func toggleFanBoost(_ sender: NSSwitch) {
         let fm = FileManager.default
         if sender.state == .on {
+            for toggle in self.fanBoostSwitches where toggle !== sender {
+                toggle.state = .off
+            }
             try? fm.createDirectory(at: self.fancurvedDir, withIntermediateDirectories: true)
-            fm.createFile(atPath: self.fanBoostURL.path, contents: nil)
+            try? Data("\(sender.tag)".utf8).write(to: self.fanBoostURL)
         } else {
             try? fm.removeItem(at: self.fanBoostURL)
         }
