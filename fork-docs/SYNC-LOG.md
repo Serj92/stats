@@ -4,6 +4,30 @@
 
 ---
 
+## 2026-07-16 — проверка апстрима (не тянули) + fan-boost 3 уровня (билд 823)
+
+### Часть 1 — апстрим осмотрен, синк НЕ делали
+
+`upstream/master` = 2 невышедших коммита после `v3.0.8` (релиза/тега нового нет):
+- `8ab8e1ef` (#3437 «0 speed spike fix») — **уже наш**. Это наш же коммит `054e7b16`, ушедший в апстрим; наш `Modules/Net/readers.swift` байт-в-байт совпадает с их post-fix (и вообще ушёл вперёд: +27/−71 к их версии — наши `requestRead()`/wifi). Тянуть нечего.
+- `81afabad` (переписан `uninstall.sh` + внутр. бамп апстрима 825→826) — единственное новое, но косметика: скрипт у нас не используется (деплой = `ditto` поверх `/Applications`), а его коммит двигает `uninstall.sh` из Resources в Copy Files в pbxproj. **Пропущено.**
+
+### Часть 2 — fan-boost: 3 уровня вместо одной галочки
+
+По просьбе пользователя: вместо одиночной «Max fan speed» — три строки в секции «Fans» попапа CPU: **100% / 50% / 25%**, одиночный выбор с возможностью снять (полное отключение ручного режима). Затрагивает ОБА репо (см. [[project_fan_boost]] в памяти).
+
+**Протокол флаг-файла изменён.** Раньше `~/Library/Application Support/fancurved/boost` был пустой (есть/нет). Теперь **в него пишется процент** (`"100"/"50"/"25"`); нет файла = кривая, пустой файл = 100% (back-compat).
+
+- **Stats** (`Modules/CPU/popup.swift`): `fanBoostSwitch` → массив `fanBoostSwitches`, `NSSwitch.tag` = уровень. `initFanControl()` строит 3 строки в цикле по `fanControlLevels`; `toggleFanBoost` гасит остальные при включении и удаляет файл при снятии; `currentFanBoostLevel`/`syncFanBoostSwitches` восстанавливают состояние в `appear()`. Высота секции → `22*3+separator`. Строки `"Fan speed 50%"`/`"Fan speed 25%"` в EN/RU/UK.
+- **fun-fan-control** (не git-репо): `boostActive()→boostLevel()->Int?` в `FanControlShared/Constants.swift`; `Controller.tick()` применяет как **пол над кривой** `pct = max(curvePct, boostPct)` — низкий ручной уровень не крутит вентиляторы медленнее, чем требует температура (безопасность), это НЕ жёсткий потолок. Лог-строка тика показывает `[BOOST N%]`.
+
+**⚠️ Подпись демона (грабли).** SwiftPM даёт `fancurved` **adhoc** (`TeamIdentifier=not set`), а SMC-хелпер пускает XPC-клиента только по требованию `anchor apple generic and identifier "com.serj.fancurved" and certificate leaf[subject.OU] = "T5V6W6793A"`. Без подписи хелпер **молча** отвергает клиента → вентиляторы перестают слушаться. Решение: `codesign --force --sign 431DDD8EC0F96883FB8F26B7404510F9CE69102D -i com.serj.fancurved <bin>` (тот же личный серт, что и Stats), проверка `codesign -R'…' --verify`.
+
+**Сборка/деплой (2026-07-16).** Демон: `swift build -c release` зелёный, подписан, `codesign -R` матч; деплой `launchctl bootout`→копия бинаря→`bootstrap` (агент `com.serj.fancurved`). Stats: Release **BUILD SUCCEEDED**, app `T5V6W6793A`, `CFBundleVersion 822→823`; `ditto` поверх `/Applications/Stats.app`, подпись зелёная, перезапущен.
+**Проверка end-to-end** (обороты через `fancurved --status`, диапазон 2317–6800): база `~2317` (кривая 0%) → «25» `~3438` → «50» `~4560` → снятие `~2317`. Совпало с `min+pct·(max−min)` точь-в-точь. Файл после теста чист.
+
+---
+
 ## 2026-07-15 — фикс краша Net + v3.0.7 → v3.0.8
 
 Началось с диагностики периодических крашей (два .ips за 12–13.07, оба на билде 820) → фикс гонки в Net, затем синк v3.0.8.
