@@ -114,6 +114,30 @@
 
 ---
 
+## 5. Управление вентиляторами из попапа CPU (кросс-репо, fun-fan-control)
+
+**Идея.** В попапе CPU, секция «Fans», — ручное управление кулерами: три тумблера уровня (**100 / 50 / 25 %**) плюс live-строка **«Current speed»** с реальными оборотами и эффективным %. Секция показывается **только если установлен демон `fun-fan-control`** (проверка `~/Library/Application Support/fancurved/` существует). Само железо (SMC) Stats **не трогает** — это осознанно.
+
+**Тумблеры — одиночный выбор с возможностью снять.** Включаешь один — остальные гаснут; активный можно выключить → ручной режим полностью отключается, возвращается температурная кривая. Реализовано массивом `fanBoostSwitches`, уровень в `NSSwitch.tag`.
+
+**Кросс-репо через флаг-файлы** (тот же принцип, что и «пауза опроса» — минимум связности):
+- Stats **пишет** `~/Library/Application Support/fancurved/boost` — содержимое = процент (`"100"/"50"/"25"`); нет файла = кривая; пустой = 100% (back-compat). Демон читает каждый тик (~2с).
+- Демон **пишет** `…/fancurved/status` каждый тик; Stats читает и показывает в «Current speed». Формат `"<pct> <rpm0,rpm1,…> <driver>"`, `driver = curve|manual`.
+
+**Floor, не потолок.** Демон применяет уровень как `pct = max(curvePct, boostPct)` — низкий ручной уровень никогда не крутит вентиляторы медленнее, чем требует температура (выбрал 25%, а горячо → кривая перебьёт до нужного). Индикатор это и делает наглядным: увидишь реальные обороты, а не выбранные. **Подтверждено пользователем как желаемое поведение.**
+
+**Индикатор — дёшево.** `refreshFanStatus()` читает `status` на **уже существующем** такте `loadCallback` и **только при `window.isVisible`** (нет новых таймеров, ноль работы при закрытом попапе) + разово в `appear()`. Свежесть `<6с` по mtime, иначе «—» (заодно признак «демон жив»). Показывает **целевые** обороты (демон уже посчитал их для управления — ноль лишних обращений к SMC/XPC; ≈ реальные минус лаг 1–2с).
+
+**Реализация (Stats-сторона).** Всё в `Modules/CPU/popup.swift`: `initFanControl()` (строит строки в цикле по `fanControlLevels` + строка статуса через `popupRow`), `toggleFanBoost`/`syncFanBoostSwitches`/`currentFanBoostLevel` (тумблеры), `refreshFanStatus`/`fanStatusURL` (индикатор). Высота секции `22*(levels+1)+separator`. Строки `"Fan speed 100/50/25%"`, `"Current speed"` в EN/RU/UK.
+
+**Деплой — нужны ОБА компонента** (иначе рассинхрон; но он безопасен: в худшем случае 100%, никогда не медленнее кривой):
+- **Демон** — канонично `./install/install.sh` в репо fun-fan-control (собирает release, `strip`, подписывает оба бинаря hardened-runtime'ом, `rm -f`+`cp` на свежий inode, перезагружает launchctl; спросит sudo). ⚠️ Демон **обязан быть подписан** личным сертификатом (OU `T5V6W6793A`) — SMC-хелпер валидирует XPC-клиента по `anchor apple generic and identifier "com.serj.fancurved" and certificate leaf[subject.OU]`; adhoc-бинарь хелпер молча отвергнет и вентиляторы перестанут слушаться. Детали — README и Troubleshooting в fun-fan-control.
+- **Stats** — обычный `ditto` Release поверх `/Applications/Stats.app` (см. [SIGNING.md](SIGNING.md)).
+
+**Демон и его протокол** документированы в `~/Documents/_development/fun-fan-control/README.md` (разделы «Manual override (boost levels)», «Live status file», «Architecture», «Troubleshooting»). Историю по билдам — см. [SYNC-LOG.md](SYNC-LOG.md) (билды 823–825).
+
+---
+
 ## Где найти место под новую фичу
 
 Большинство виджетов — `Kit/Widgets/*.swift` (shared между модулями). Если добавляешь новую опцию виджета: persistent state + UI в `settings()` + публичный API + ветка в `draw()`.
