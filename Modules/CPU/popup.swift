@@ -54,7 +54,8 @@ internal class Popup: PopupWrapper {
         (50, "Fan speed 50%"),
         (25, "Fan speed 25%")
     ]
-    private var fanControlHeight: CGFloat { CGFloat(22 * self.fanControlLevels.count) + Constants.Popup.separatorHeight }
+    // +1 row for the live "current speed" readout below the level toggles.
+    private var fanControlHeight: CGFloat { CGFloat(22 * (self.fanControlLevels.count + 1)) + Constants.Popup.separatorHeight }
 
     private var systemField: NSTextField? = nil
     private var userField: NSTextField? = nil
@@ -87,6 +88,7 @@ internal class Popup: PopupWrapper {
     private var sliderView: NSView? = nil
     private var fanControlView: NSView? = nil
     private var fanBoostSwitches: [NSSwitch] = []
+    private var fanStatusField: ValueField? = nil
     
     private var lineChart: LineChartView? = nil
     private var columnChart: ColumnChartView? = nil
@@ -188,6 +190,7 @@ internal class Popup: PopupWrapper {
     public override func appear() {
         self.uptimeField?.stringValue = self.uptimeValue
         self.syncFanBoostSwitches()
+        self.refreshFanStatus()
         self.replay(self.loadCache, render: self.renderLoad)
         self.replay(self.temperatureCache, render: self.renderTemperature)
         self.replay(self.frequencyCache, render: self.renderFrequency)
@@ -366,6 +369,7 @@ internal class Popup: PopupWrapper {
             .appendingPathComponent("fancurved")
     }
     private var fanBoostURL: URL { self.fancurvedDir.appendingPathComponent("boost") }
+    private var fanStatusURL: URL { self.fancurvedDir.appendingPathComponent("status") }
     private var isFanControlInstalled: Bool {
         FileManager.default.fileExists(atPath: self.fancurvedDir.path)
     }
@@ -420,10 +424,44 @@ internal class Popup: PopupWrapper {
             container.addArrangedSubview(row)
         }
 
+        // Live readout of the actual applied speed (published by the daemon). Explains the floor:
+        // if you picked 25% but it's hot, this shows the higher speed the curve is really running.
+        let (_, statusValue, _) = popupRow(container, title: localizedString("Current speed"), value: "—")
+        self.fanStatusField = statusValue
+        self.refreshFanStatus()
+
         view.addSubview(separator)
         view.addSubview(container)
         self.fanControlView = view
         return view
+    }
+
+    // Read the daemon's live status file and show current fan RPM + effective %. Cheap — a ~20-byte
+    // read on the popup's existing per-tick heartbeat, only while visible. Missing/stale (daemon not
+    // reporting) → "—". Format written by the daemon: "<pct> <rpm0,rpm1,…> <driver>".
+    private func refreshFanStatus() {
+        guard let field = self.fanStatusField else { return }
+        guard let data = try? Data(contentsOf: self.fanStatusURL),
+              let mtime = try? self.fanStatusURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+              Date().timeIntervalSince(mtime) < 6 else {
+            field.stringValue = "—"
+            return
+        }
+        let parts = String(decoding: data, as: UTF8.self).split(separator: " ")
+        guard parts.count >= 2, let pct = Int(parts[0]) else {
+            field.stringValue = "—"
+            return
+        }
+        let rpms = parts[1].split(separator: ",").compactMap { Int($0) }
+        let rpmStr: String
+        if rpms.isEmpty {
+            rpmStr = ""
+        } else if rpms.allSatisfy({ $0 == rpms[0] }) {
+            rpmStr = "\(rpms[0])"
+        } else {
+            rpmStr = rpms.map(String.init).joined(separator: "/")
+        }
+        field.stringValue = rpmStr.isEmpty ? "\(pct)%" : "\(rpmStr) rpm · \(pct)%"
     }
 
     // Reflect the flag file onto the switches: at most one is on, matching the written level; none
@@ -504,6 +542,7 @@ internal class Popup: PopupWrapper {
     public func loadCallback(_ value: CPU_Load) {
         self.apply(value, to: self.loadCache, render: self.renderLoad)
         self.lineChart?.addValue(value.totalUsage)
+        if self.window?.isVisible == true { self.refreshFanStatus() }
     }
     
     private func renderLoad(_ value: CPU_Load) {

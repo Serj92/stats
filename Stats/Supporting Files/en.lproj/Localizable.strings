@@ -383,6 +383,7 @@
 "Open System Settings ▸ Login Items, make sure Stats is allowed in the background, then try again." = "Open System Settings ▸ Login Items, make sure Stats is allowed in the background, then try again.";
 "Fan value" = "Fan value";
 "Fan speed 100%" = "Fan speed 100%";
+"Current speed" = "Current speed";
 "Fan speed 50%" = "Fan speed 50%";
 "Fan speed 25%" = "Fan speed 25%";
 "Turn off fan" = "Turn off fan";

@@ -383,6 +383,7 @@
 "Open System Settings ▸ Login Items, make sure Stats is allowed in the background, then try again." = "Open System Settings ▸ Login Items, make sure Stats is allowed in the background, then try again.";
 "Fan value" = "Значение вентилятора";
 "Fan speed 100%" = "Скорость вентиляторов 100%";
+"Current speed" = "Текущая скорость";
 "Fan speed 50%" = "Скорость вентиляторов 50%";
 "Fan speed 25%" = "Скорость вентиляторов 25%";
 "Turn off fan" = "Выключить вентилятор";
