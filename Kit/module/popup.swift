@@ -131,6 +131,12 @@ open class PopupWrapper: NSStackView, Popup_p {
         self.sections.append(view)
     }
 
+    /// Position of a registered section in canonical order, or nil if it is not registered. Lets a
+    /// module place a new section relative to an existing one instead of at a hardcoded index.
+    public func sectionIndex(of view: NSView) -> Int? {
+        self.sections.firstIndex(where: { $0 === view })
+    }
+
     public func removeSection(_ view: NSView) {
         self.sections.removeAll(where: { $0 === view })
         self.stretchHandlers.removeValue(forKey: ObjectIdentifier(view))
