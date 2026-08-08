@@ -818,21 +818,21 @@ internal class FanView: NSStackView {
         }
     }
     
-    @objc func setMin(_ sender: NSButton) {
+    @objc func setMin() {
         self.slider?.doubleValue = self.fan.minSpeed
         self.maxBtn?.state = .off
         self.setSpeed(value: Int(self.fan.minSpeed))
         NotificationCenter.default.post(name: .syncFansControl, object: nil, userInfo: ["speed": Int(self.fan.minSpeed)])
     }
     
-    @objc func setMax(_ sender: NSButton) {
+    @objc func setMax() {
         self.slider?.doubleValue = self.fan.maxSpeed
         self.minBtn?.state = .off
         self.setSpeed(value: Int(self.fan.maxSpeed))
         NotificationCenter.default.post(name: .syncFansControl, object: nil, userInfo: ["speed": Int(self.fan.maxSpeed)])
     }
     
-    @objc private func wakeListener(aNotification: NSNotification) {
+    @objc private func wakeListener() {
         self.resetModeAfterSleep = true
         
         if self.speedState {
@@ -863,7 +863,7 @@ internal class FanView: NSStackView {
         }
     }
     
-    @objc private func sleepListener(aNotification: NSNotification) {
+    @objc private func sleepListener() {
         guard SMCHelper.shared.isActive(), let mode = self.fan.customMode, !mode.isAutomatic else { return }
         
         self.willSleepMode = mode
@@ -923,7 +923,7 @@ internal class FanView: NSStackView {
         })
     }
     
-    @objc private func installHelper(_ sender: NSButton) {
+    @objc private func installHelper() {
         SMCHelper.shared.install { [weak self] state in
             DispatchQueue.main.async {
                 switch state {
@@ -939,7 +939,7 @@ internal class FanView: NSStackView {
         }
     }
     
-    @objc private func openLoginItems(_ sender: NSButton) {
+    @objc private func openLoginItems() {
         SMCHelper.shared.openLoginItems()
     }
     
