@@ -78,7 +78,15 @@
 
 Ad-hoc Debug-сборка (рецепт из `SIGNING.md`) снималась **дважды: до синка и после**, чтобы «ничего не сломали» было утверждением, а не надеждой. Оба раза **BUILD SUCCEEDED** под Xcode 16.0, ошибок ноль, новых trailing-comma костылей не потребовалось. Скрипт «Set widgets extension version» сам протянул `3.0.11 (834)` в `Widgets/Info.plist`. После харденинга `NSScreen.main` собрано в третий раз — снова **BUILD SUCCEEDED**. Билд остался `834`: деплоя не было, номер ещё не «потрачен».
 
-**Release не собирали, деплоя не было.** В `/Applications/Stats.app` по-прежнему лежит WIP-билд **833** от 30.07 — то есть установленное приложение ни одного фикса из этого синка не содержит.
+**Release-сборка и деплой (09.08).** Release **BUILD SUCCEEDED** по рецепту из `SIGNING.md` (SHA-1 серта, `CODE_SIGN_STYLE=Manual`), новых trailing-comma костылей не потребовалось. Sanity-check зелёный — все **3 team-ID места** совпали: `SMPrivilegedExecutables` = `TeamIdentifier` приложения = `TeamIdentifier` хелпера = `T5V6W6793A`, значит датчики живы. Бандл `3.0.11 (834)`.
+
+Деплой: `osascript -e 'quit app "Stats"'` → дождались реального выхода процесса → `mv /Applications/Stats.app /tmp/Stats-backup.app` (прошлый **833** там же и лежит для отката) → `ditto` свежего Release. Именно `mv`, а не наложение поверх — чтобы не осталось файлов-сирот от прошлого бандла. После установки `codesign --verify --deep --strict` зелёный, оба `TeamIdentifier` = `T5V6W6793A`. Запущено, держится (RSS ~247 МБ на прогреве).
+
+**Откат:** `osascript -e 'quit app "Stats"' && rm -rf /Applications/Stats.app && mv /tmp/Stats-backup.app /Applications/Stats.app`.
+
+> ⚠️ Демон `fun-fan-control` не трогали — правок в нём в этот синк не было.
+>
+> ⚠️ **Выкаченный билд содержит незавершённый WIP** по двухколоночным попапам (снапшот `3b0dd907`): сетка в Combined view, слим-хедер попапов 30pt вместо 42, двухколоночная раскладка во всех модулях. Это осознанно — работа собирается и работает, но не закончена. Полный откат кода к состоянию до синка: `git reset --hard backup/local-build-pre-v3.0.11`.
 
 ---
 
