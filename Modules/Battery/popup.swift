@@ -42,7 +42,7 @@ internal class Popup: PopupWrapper {
     private var processesView: NSView? = nil
     private var processes: ProcessesView? = nil
     private var processesInitialized: Bool = false
-    
+
     private let usageCache = PopupCache<Battery_Usage>()
     
     private var numberOfProcesses: Int {
@@ -58,15 +58,19 @@ internal class Popup: PopupWrapper {
     public init(_ module: ModuleType) {
         super.init(module, frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: 0))
         
-        self.spacing = 0
-        self.orientation = .vertical
-        
-        self.addArrangedSubview(self.initDashboard())
-        self.addArrangedSubview(self.initDetails())
-        self.addArrangedSubview(self.initBattery())
-        self.addArrangedSubview(self.initProcesses())
-        
-        self.recalculateHeight()
+        // Two-column layout: split sections across a left and right column so the popup is roughly
+        // half as tall as the old single stack. Columns are fixed 264pt; the popup is 2×264 + gap.
+        self.makeTwoColumns()
+
+        // Sections in reading order; the balancer decides where the columns split. "Adapter" is
+        // absent on purpose — it only exists while running on AC power (renderUsage).
+        self.setSections([
+            self.initDashboard(),
+            self.initDetails(),
+            self.initBattery(),
+            self.initProcesses()
+        ])
+        self.layoutColumns()
     }
     
     required init?(coder: NSCoder) {
@@ -81,23 +85,8 @@ internal class Popup: PopupWrapper {
         self.processes?.setLock(false)
     }
     
-    private func recalculateHeight() {
-        var h: CGFloat = 0
-        self.arrangedSubviews.forEach { v in
-            if let v = v as? NSStackView {
-                h += v.arrangedSubviews.map({ $0.fittingSize.height }).reduce(0, +)
-            } else {
-                h += v.fittingSize.height
-            }
-        }
-        if self.frame.size.height != h {
-            self.setFrameSize(NSSize(width: self.frame.width, height: h))
-            self.sizeCallback?(self.frame.size)
-        }
-    }
-    
     private func initDashboard() -> NSView {
-        let view: NSStackView = NSStackView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: self.dashboardHeight))
+        let view: NSStackView = NSStackView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: self.dashboardHeight))
         view.heightAnchor.constraint(equalToConstant: view.bounds.height).isActive = true
         view.orientation = .vertical
         view.spacing = 0
@@ -149,7 +138,7 @@ internal class Popup: PopupWrapper {
     }
     
     private func initDetails() -> NSView {
-        let view = NSStackView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: 0))
+        let view = NSStackView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: 0))
         view.orientation = .vertical
         view.spacing = 0
         view.addArrangedSubview(SeparatorView(label: localizedString("Details")))
@@ -168,7 +157,7 @@ internal class Popup: PopupWrapper {
     }
     
     private func initBattery() -> NSView {
-        let view = NSStackView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: 0))
+        let view = NSStackView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: 0))
         view.orientation = .vertical
         view.spacing = 0
         view.addArrangedSubview(SeparatorView(label: localizedString("Battery")))
@@ -251,7 +240,7 @@ internal class Popup: PopupWrapper {
     }
     
     private func initAdapter() -> NSView {
-        let view = NSStackView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: 0))
+        let view = NSStackView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: 0))
         view.orientation = .vertical
         view.spacing = 0
         view.addArrangedSubview(SeparatorView(label: localizedString("Power adapter")))
@@ -267,11 +256,11 @@ internal class Popup: PopupWrapper {
     private func initProcesses() -> NSView {
         if self.numberOfProcesses == 0 { return NSView() }
         
-        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: self.processesHeight))
+        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: self.processesHeight))
         view.heightAnchor.constraint(equalToConstant: view.bounds.height).isActive = true
-        let separator = separatorView(localizedString("Top processes"), origin: NSPoint(x: 0, y: self.processesHeight-Constants.Popup.separatorHeight), width: self.frame.width)
+        let separator = separatorView(localizedString("Top processes"), origin: NSPoint(x: 0, y: self.processesHeight-Constants.Popup.separatorHeight), width: Constants.Popup.width)
         let container: ProcessesView = ProcessesView(
-            frame: NSRect(x: 0, y: 0, width: self.frame.width, height: separator.frame.origin.y),
+            frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: separator.frame.origin.y),
             values: [(localizedString("Usage"), nil)],
             n: self.numberOfProcesses
         )
@@ -305,10 +294,11 @@ internal class Popup: PopupWrapper {
                 self.timeField?.stringValue = localizedString("Unknown")
             }
             
-            if self.adapterView != nil {
-                self.adapterView?.removeFromSuperview()
+            if let view = self.adapterView {
+                self.removeSection(view)
+                view.removeFromSuperview()
                 self.adapterView = nil
-                self.recalculateHeight()
+                self.layoutColumns()
             }
             
             self.powerField?.stringValue = "\(abs(value.batteryPower).roundTo(decimalPlaces: 2)) W"
@@ -323,8 +313,9 @@ internal class Popup: PopupWrapper {
             }
             
             if self.adapterView == nil {
-                self.insertArrangedSubview(self.initAdapter(), at: 3)
-                self.recalculateHeight()
+                // Canonical order: after the battery section, before "Top processes".
+                self.insertSection(self.initAdapter(), at: 3)
+                self.layoutColumns()
             }
             
             let current = value.adapterVoltage > 0 ? Int((value.adapterPower / value.adapterVoltage) * 1000) : 0
@@ -375,12 +366,15 @@ internal class Popup: PopupWrapper {
         if self.processes?.count == self.numberOfProcesses { return }
         
         DispatchQueue.main.async(execute: {
-            self.processesView?.removeFromSuperview()
+            if let old = self.processesView {
+                self.removeSection(old)
+                old.removeFromSuperview()
+            }
             self.processesView = nil
             self.processes = nil
-            self.addArrangedSubview(self.initProcesses())
+            self.appendSection(self.initProcesses())
             self.processesInitialized = false
-            self.recalculateHeight()
+            self.layoutColumns()
         })
     }
     

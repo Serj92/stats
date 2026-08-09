@@ -68,7 +68,7 @@ internal class Popup: PopupWrapper {
     
     private var processesView: NSView? = nil
     private var processes: ProcessesView? = nil
-    
+
     private var chart: NetworkChartView? = nil
     private var reverseOrderState: Bool = false
     private var chartHistory: Int = 180
@@ -117,9 +117,10 @@ internal class Popup: PopupWrapper {
     public init(_ module: ModuleType) {
         super.init(module, frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: 0))
         
-        self.spacing = 0
-        self.orientation = .vertical
-        
+        // Two-column layout: split sections across a left and right column so the popup is roughly
+        // half as tall as the old single stack. Columns are fixed 264pt; the popup is 2×264 + gap.
+        self.makeTwoColumns()
+
         self.downloadColorState = SColor.fromString(Store.shared.string(key: "\(self.title)_downloadColor", defaultValue: self.downloadColorState.key))
         self.uploadColorState = SColor.fromString(Store.shared.string(key: "\(self.title)_uploadColor", defaultValue: self.uploadColorState.key))
         self.reverseOrderState = Store.shared.bool(key: "\(self.title)_reverseOrder", defaultValue: self.reverseOrderState)
@@ -133,20 +134,24 @@ internal class Popup: PopupWrapper {
         self.base = DataSizeBase(rawValue: Store.shared.string(key: "\(self.title)_base", defaultValue: "byte")) ?? .byte
         self.speedUnit = networkSpeedUnit(from: Store.shared.string(key: "\(self.title)_speedUnit", defaultValue: NetworkSpeedUnitAuto)).key
         
-        self.addArrangedSubview(self.initDashboard())
-        self.addArrangedSubview(self.initChart())
-        self.addArrangedSubview(self.initConnectivityChart())
-        self.addArrangedSubview(self.initDetails())
-        self.addArrangedSubview(self.initInterface())
-        self.addArrangedSubview(self.initAddress())
-        self.addArrangedSubview(self.initProcesses())
-        
-        if !self.publicIPState {
-            self.addressView?.removeFromSuperview()
+        // Sections in reading order; the balancer decides where the columns split.
+        self.setSections([
+            self.initDashboard(),
+            self.initChart(),
+            self.initConnectivityChart(),
+            self.initDetails(),
+            self.initInterface(),
+            self.initAddress(),
+            self.initProcesses()
+        ])
+
+        if !self.publicIPState, let view = self.addressView {
+            self.removeSection(view)
+            view.removeFromSuperview()
         }
-        
-        self.recalculateHeight()
-        
+
+        self.layoutColumns()
+
         NotificationCenter.default.addObserver(self, selector: #selector(self.resetTotalNetworkUsageCallback), name: .resetTotalNetworkUsage, object: nil)
     }
     
@@ -158,25 +163,10 @@ internal class Popup: PopupWrapper {
         NotificationCenter.default.removeObserver(self, name: .resetTotalNetworkUsage, object: nil)
     }
     
-    private func recalculateHeight() {
-        var h: CGFloat = 0
-        self.arrangedSubviews.forEach { v in
-            if let v = v as? NSStackView {
-                h += v.arrangedSubviews.map({ $0.bounds.height }).reduce(0, +)
-            } else {
-                h += v.bounds.height
-            }
-        }
-        if self.frame.size.height != h {
-            self.setFrameSize(NSSize(width: self.frame.width, height: h))
-            self.sizeCallback?(self.frame.size)
-        }
-    }
-    
     // MARK: - views
     
     private func initDashboard() -> NSView {
-        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: 90))
+        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: 90))
         view.heightAnchor.constraint(equalToConstant: view.bounds.height).isActive = true
         
         let leftPart: NSView = NSView(frame: NSRect(x: 0, y: 0, width: view.frame.width / 2, height: view.frame.height))
@@ -202,15 +192,21 @@ internal class Popup: PopupWrapper {
     }
     
     private func initChart() -> NSView {
-        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: 90 + Constants.Popup.separatorHeight))
-        view.heightAnchor.constraint(equalToConstant: view.bounds.height).isActive = true
-        
-        let separator = separatorView(localizedString("Usage history"), origin: NSPoint(x: 0, y: 90), width: self.frame.width)
-        let container: NSView = NSView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: separator.frame.origin.y))
+        let sectionBase: CGFloat = 90 + Constants.Popup.separatorHeight
+        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: sectionBase))
+        let height = view.heightAnchor.constraint(equalToConstant: sectionBase)
+        height.isActive = true
+
+        let separator = separatorView(localizedString("Usage history"), origin: NSPoint(x: 0, y: 90), width: Constants.Popup.width)
+        // Autoresizing keeps the pieces in place when the section is stretched: the separator stays
+        // pinned to the top, the chart box below it takes all the extra height.
+        separator.autoresizingMask = [.width, .minYMargin]
+        let container: NSView = NSView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: separator.frame.origin.y))
+        container.autoresizingMask = [.width, .height]
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.lightGray.withAlphaComponent(0.1).cgColor
         container.layer?.cornerRadius = Constants.Popup.radius
-        
+
         let chart = NetworkChartView(
             frame: NSRect(x: 0, y: 1, width: container.frame.width, height: container.frame.height - 2),
             num: self.chartHistory, reversedOrder: self.reverseOrderState, outColor: self.uploadColor, inColor: self.downloadColor,
@@ -219,20 +215,28 @@ internal class Popup: PopupWrapper {
         )
         chart.setBase(self.base)
         chart.setSpeedUnit(self.speedUnit)
+        chart.autoresizingMask = [.width, .height]
         container.addSubview(chart)
         self.chart = chart
-        
+
         view.addSubview(separator)
         view.addSubview(container)
-        
+
+        // The usage graph is what soaks up the leftover height when this column comes up short —
+        // a taller graph is a better use of the space than a gap.
+        self.setStretchable(view) { [weak view] extra in
+            height.constant = sectionBase + extra
+            view?.setFrameSize(NSSize(width: Constants.Popup.width, height: sectionBase + extra))
+        }
+
         return view
     }
     
     private func initConnectivityChart() -> NSView {
-        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: 30 + Constants.Popup.separatorHeight))
+        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: 30 + Constants.Popup.separatorHeight))
         view.heightAnchor.constraint(equalToConstant: view.bounds.height).isActive = true
-        let separator = separatorView(localizedString("Connectivity history"), origin: NSPoint(x: 0, y: 30), width: self.frame.width)
-        let container: NSView = NSView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: separator.frame.origin.y))
+        let separator = separatorView(localizedString("Connectivity history"), origin: NSPoint(x: 0, y: 30), width: Constants.Popup.width)
+        let container: NSView = NSView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: separator.frame.origin.y))
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.lightGray.withAlphaComponent(0.1).cgColor
         container.layer?.cornerRadius = 3
@@ -248,7 +252,7 @@ internal class Popup: PopupWrapper {
     }
     
     private func initDetails() -> NSView {
-        let view = NSStackView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: 0))
+        let view = NSStackView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: 0))
         view.orientation = .vertical
         view.spacing = 0
         
@@ -279,7 +283,7 @@ internal class Popup: PopupWrapper {
     }
     
     private func initInterface() -> NSView {
-        let view = NSStackView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: 0))
+        let view = NSStackView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: 0))
         view.orientation = .vertical
         view.spacing = 0
         
@@ -321,7 +325,7 @@ internal class Popup: PopupWrapper {
     }
     
     private func initAddress() -> NSView {
-        let view = NSStackView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: 0))
+        let view = NSStackView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: 0))
         view.orientation = .vertical
         view.spacing = 0
         
@@ -365,10 +369,14 @@ internal class Popup: PopupWrapper {
             return v
         }
         
-        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: self.processesHeight))
-        let separator = separatorView(localizedString("Top processes"), origin: NSPoint(x: 0, y: self.processesHeight-Constants.Popup.separatorHeight), width: self.frame.width)
+        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: self.processesHeight))
+        // Without this the section has no height as far as auto layout is concerned: the column
+        // treats it as empty and its frame-positioned rows spill from the bottom edge upwards,
+        // leaving a hole above them.
+        view.heightAnchor.constraint(equalToConstant: view.bounds.height).isActive = true
+        let separator = separatorView(localizedString("Top processes"), origin: NSPoint(x: 0, y: self.processesHeight-Constants.Popup.separatorHeight), width: Constants.Popup.width)
         let container: ProcessesView = ProcessesView(
-            frame: NSRect(x: 0, y: 0, width: self.frame.width, height: separator.frame.origin.y),
+            frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: separator.frame.origin.y),
             values: [(localizedString("Downloading"), self.downloadColor), (localizedString("Uploading"), self.uploadColor)],
             n: self.numberOfProcesses
         )
@@ -390,12 +398,15 @@ internal class Popup: PopupWrapper {
         if self.processes?.count == self.numberOfProcesses { return }
         
         DispatchQueue.main.async(execute: {
-            self.processesView?.removeFromSuperview()
+            if let old = self.processesView {
+                self.removeSection(old)
+                old.removeFromSuperview()
+            }
             self.processesView = nil
             self.processes = nil
-            self.addArrangedSubview(self.initProcesses())
+            self.appendSection(self.initProcesses())
             self.processesInitialized = false
-            self.recalculateHeight()
+            self.layoutColumns()
         })
     }
     
@@ -590,7 +601,7 @@ internal class Popup: PopupWrapper {
         self.statusField?.setStatus(value.status)
         
         if resized {
-            self.recalculateHeight()
+            self.layoutColumns()
         }
 
         self.chart?.needsDisplay = true
@@ -773,12 +784,16 @@ internal class Popup: PopupWrapper {
         Store.shared.set(key: "\(self.title)_publicIP", value: self.publicIPState)
         
         DispatchQueue.main.async(execute: {
-            if !self.publicIPState {
-                self.addressView?.removeFromSuperview()
-            } else if let view = self.addressView {
-                self.insertArrangedSubview(view, at: 4)
+            if let view = self.addressView {
+                if !self.publicIPState {
+                    self.removeSection(view)
+                    view.removeFromSuperview()
+                } else {
+                    // Canonical order: after the interface section, before "Top processes".
+                    self.insertSection(view, at: 5)
+                }
             }
-            self.recalculateHeight()
+            self.layoutColumns()
         })
     }
     @objc private func toggleFixedScale(_ newValue: Int) {
@@ -817,7 +832,7 @@ internal class Popup: PopupWrapper {
             }
         }
         
-        self.recalculateHeight()
+        self.layoutColumns()
     }
     @objc private func toggleEmojiCC(_ sender: NSControl) {
         self.emojiCCState = !controlState(sender)
@@ -893,7 +908,7 @@ internal class Popup: PopupWrapper {
         var topPartWidth = valueWidth + unitWidth
         
         self.uploadView?.setFrameSize(NSSize(width: topPartWidth, height: self.uploadView!.frame.height))
-        self.uploadView?.setFrameOrigin(NSPoint(x: ((self.frame.width/2)-topPartWidth)/2, y: self.uploadView!.frame.origin.y))
+        self.uploadView?.setFrameOrigin(NSPoint(x: ((Constants.Popup.width/2)-topPartWidth)/2, y: self.uploadView!.frame.origin.y))
         
         self.uploadValueField?.setFrameSize(NSSize(width: valueWidth, height: self.uploadValueField!.frame.height))
         self.uploadValueField?.stringValue = "\(upload.0)"
@@ -906,7 +921,7 @@ internal class Popup: PopupWrapper {
         topPartWidth = valueWidth + unitWidth
         
         self.downloadView?.setFrameSize(NSSize(width: topPartWidth, height: self.downloadView!.frame.height))
-        self.downloadView?.setFrameOrigin(NSPoint(x: ((self.frame.width/2)-topPartWidth)/2, y: self.downloadView!.frame.origin.y))
+        self.downloadView?.setFrameOrigin(NSPoint(x: ((Constants.Popup.width/2)-topPartWidth)/2, y: self.downloadView!.frame.origin.y))
         
         self.downloadValueField?.setFrameSize(NSSize(width: valueWidth, height: self.downloadValueField!.frame.height))
         self.downloadValueField?.stringValue = "\(download.0)"

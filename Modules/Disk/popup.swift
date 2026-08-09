@@ -44,7 +44,7 @@ internal class Popup: PopupWrapper {
     }
     private var processes: ProcessesView? = nil
     private var processesView: NSView? = nil
-    
+
     private let settingsSection = PreferencesSection(title: localizedString("Drives"))
     private var lastList: [String] = []
     
@@ -56,30 +56,30 @@ internal class Popup: PopupWrapper {
         self.writeColorState = SColor.fromString(Store.shared.string(key: "\(self.title)_writeColor", defaultValue: self.writeColorState.key))
         self.reverseOrderState = Store.shared.bool(key: "\(self.title)_reverseOrder", defaultValue: self.reverseOrderState)
         
-        self.orientation = .vertical
-        self.distribution = .fill
-        self.spacing = 0
-        
-        self.addArrangedSubview(self.disks)
-        self.addArrangedSubview(self.initProcesses())
-        
-        self.recalculateHeight()
+        // Two-column layout: split sections across a left and right column so the popup is roughly
+        // half as tall as the old single stack. Columns are fixed 264pt; the popup is 2×264 + gap.
+        self.makeTwoColumns()
+
+        _ = self.initProcesses()
+        self.rebuildSections()
+        self.layoutColumns()
     }
     
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
     
-    private func recalculateHeight() {
-        var h: CGFloat = 0
-        h += self.disks.subviews.map({ $0.frame.height + self.disks.spacing }).reduce(0, +) - self.disks.spacing
-        h += self.processesHeight
-        if h > 0 && self.frame.size.height != h {
-            self.setFrameSize(NSSize(width: self.frame.width, height: h))
-            self.sizeCallback?(self.frame.size)
+    // Reading order: the stack of drive cards, then one SMART block per drive, then top processes.
+    // Rebuilt whenever the drive list or the processes section changes.
+    private func rebuildSections() {
+        var list: [NSView] = [self.disks]
+        list.append(contentsOf: self.disks.subviews.compactMap({ ($0 as? DiskView)?.smartView }))
+        if let processes = self.processesView {
+            list.append(processes)
         }
+        self.setSections(list)
     }
-    
+
     private func initProcesses() -> NSView {
         if self.numberOfProcesses == 0 {
             let v = NSView()
@@ -87,10 +87,14 @@ internal class Popup: PopupWrapper {
             return v
         }
         
-        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: self.processesHeight))
-        let separator = separatorView(localizedString("Top processes"), origin: NSPoint(x: 0, y: self.processesHeight-Constants.Popup.separatorHeight), width: self.frame.width)
+        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: self.processesHeight))
+        // Without this the section has no height as far as auto layout is concerned: the column
+        // treats it as empty and its frame-positioned rows spill from the bottom edge upwards,
+        // leaving a hole above them.
+        view.heightAnchor.constraint(equalToConstant: view.bounds.height).isActive = true
+        let separator = separatorView(localizedString("Top processes"), origin: NSPoint(x: 0, y: self.processesHeight-Constants.Popup.separatorHeight), width: Constants.Popup.width)
         let container: ProcessesView = ProcessesView(
-            frame: NSRect(x: 0, y: 0, width: self.frame.width, height: separator.frame.origin.y),
+            frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: separator.frame.origin.y),
             values: [(localizedString("Read"), self.readColor), (localizedString("Write"), self.writeColor)],
             n: self.numberOfProcesses
         )
@@ -111,12 +115,14 @@ internal class Popup: PopupWrapper {
         defer {
             let h = self.disks.subviews.map({ $0.bounds.height + self.disks.spacing }).reduce(0, +) - self.disks.spacing
             if h > 0 && self.disks.frame.size.height != h {
-                self.disks.setFrameSize(NSSize(width: self.frame.width, height: h))
-                self.recalculateHeight()
+                self.disks.setFrameSize(NSSize(width: Constants.Popup.width, height: h))
             } else if h < 0 && self.disks.frame.size.height != 0 {
-                self.disks.setFrameSize(NSSize(width: self.frame.width, height: 0))
-                self.recalculateHeight()
+                self.disks.setFrameSize(NSSize(width: Constants.Popup.width, height: 0))
             }
+            // Unconditional: a drive appearing or leaving changes the section list even when the
+            // stack of cards happens to keep its height.
+            self.rebuildSections()
+            self.layoutColumns()
             self.lastList = value.array.compactMap{ $0.uuid }
         }
         
@@ -148,7 +154,7 @@ internal class Popup: PopupWrapper {
                 self.disks.addArrangedSubview(DiskView(
                     width: Constants.Popup.width,
                     drive: drive,
-                    resize: self.recalculateHeight
+                    resize: self.layoutColumns
                 ))
             }
         }
@@ -189,9 +195,10 @@ internal class Popup: PopupWrapper {
             self.processesView?.removeFromSuperview()
             self.processesView = nil
             self.processes = nil
-            self.addArrangedSubview(self.initProcesses())
+            _ = self.initProcesses()
+            self.rebuildSections()
             self.processesInitialized = false
-            self.recalculateHeight()
+            self.layoutColumns()
         })
     }
     
@@ -294,6 +301,8 @@ internal class DiskView: NSStackView {
     private var barView: BarChartView
     private var legendView: LegendView
     private var detailsView: DetailsView
+    /// Built here because the drive owns the data, but hosted by the popup as its own section.
+    internal let smartView: SmartView
     
     private var detailsState: Bool {
         get { Store.shared.bool(key: "\(self.uuid)_details", defaultValue: false) }
@@ -321,7 +330,8 @@ internal class DiskView: NSStackView {
         }
         self.legendView = LegendView(width: innerWidth, id: "\(d.mediaName)_\(d.path?.absoluteString ?? "")", size: d.size, free: d.free)
         self.detailsView = DetailsView(width: innerWidth, id: "\(d.mediaName)_\(d.path?.absoluteString ?? "")", details: d)
-        
+        self.smartView = SmartView(width: width)
+
         super.init(frame: NSRect(x: 0, y: 0, width: width, height: 0))
         
         self.widthAnchor.constraint(equalToConstant: width).isActive = true
@@ -335,8 +345,10 @@ internal class DiskView: NSStackView {
         self.nameView.detailsCallback = { [weak self] in
             guard let s = self else { return }
             s.detailsState = !s.detailsState
+            s.smartView.setVisible(s.detailsState)
             s.toggleDetails()
         }
+        self.smartView.setVisible(self.detailsState)
         
         self.addArrangedSubview(self.nameView)
         self.addArrangedSubview(self.chartView)
@@ -361,13 +373,14 @@ internal class DiskView: NSStackView {
             self.barView.setValue(ColorValue(Double(self.size - value.free) / Double(self.size), color: self.mainColor))
         }
         self.detailsView.update(details: value)
-        self.detailsView.update(smart: value.smart)
+        self.smartView.update(smart: value.smart)
     }
     
     public func appear() {
         self.chartView.appear()
         self.legendView.appear()
         self.detailsView.appear()
+        self.smartView.appear()
     }
     
     public func updateStats(stats: stats) {
@@ -711,26 +724,12 @@ private class LegendView: NSView {
 }
 
 internal class DetailsView: NSStackView {
-    private var smartHeight: CGFloat {
-        get { (22*8) + Constants.Popup.separatorHeight }
-    }
-    
     private var totalReadValueField: ValueField?
     private var totalWrittenValueField: ValueField?
     private var fileSystemValueField: ValueField?
     private var connectionTypeValueField: ValueField?
     
-    private var smartTotalReadValueField: ValueField?
-    private var smartTotalWrittenValueField: ValueField?
-    private var temperatureValueField: ValueField?
-    private var healthValueField: ValueField?
-    private var powerCyclesValueField: ValueField?
-    private var powerOnHoursValueField: ValueField?
-    private var criticalWarningValueField: ValueField?
-    private var availableSpareValueField: ValueField?
-    
     private let statsCache = PopupCache<stats>()
-    private let smartCache = PopupCache<smart_t>()
     
     public init(width: CGFloat, id: String, details: drive? = nil) {
         super.init(frame: CGRect(x: 0, y: 0, width: width, height: 0))
@@ -740,7 +739,6 @@ internal class DetailsView: NSStackView {
         self.spacing = 0
         
         self.addArrangedSubview(self.initSpeed())
-        self.addArrangedSubview(self.initSmart())
         
         if let details {
             self.update(details: details)
@@ -792,15 +790,58 @@ internal class DetailsView: NSStackView {
         return view
     }
     
-    private func initSmart() -> NSView {
-        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: self.smartHeight))
-        view.widthAnchor.constraint(equalToConstant: view.bounds.width).isActive = true
-        view.heightAnchor.constraint(equalToConstant: view.bounds.height).isActive = true
-        let separator = separatorView(localizedString("SMART"), origin: NSPoint(x: 0, y: self.smartHeight-Constants.Popup.separatorHeight), width: self.frame.width)
-        let container: NSStackView = NSStackView(frame: NSRect(x: 0, y: 0, width: view.frame.width, height: separator.frame.origin.y))
+    public func update(stats: stats) {
+        self.statsCache.apply(stats, visible: self.window?.isVisible ?? false, render: self.renderStats)
+    }
+
+    private func renderStats(_ stats: stats) {
+        self.totalReadValueField?.stringValue = Units(bytes: stats.readBytes).getReadableMemory()
+        self.totalReadValueField?.toolTip = "\(stats.readBytes / (512 * 1000))"
+        self.totalWrittenValueField?.stringValue = Units(bytes: stats.writeBytes).getReadableMemory()
+        self.totalWrittenValueField?.toolTip = "\(stats.writeBytes / (512 * 1000))"
+    }
+
+    public func update(details d: drive) {
+        self.fileSystemValueField?.stringValue = d.fileSystem.isEmpty ? localizedString("Unknown") : d.fileSystem.uppercased()
+        self.connectionTypeValueField?.stringValue = d.connectionType.isEmpty ? localizedString("Unknown") : d.connectionType
+    }
+
+    public func appear() {
+        self.statsCache.replay(render: self.renderStats)
+    }
+}
+
+// SMART is its own popup section rather than part of the drive card: folded into the card it made
+// the left column tower over everything else, and the balancer had nothing to work with.
+internal class SmartView: NSView {
+    private var naturalHeight: CGFloat { (22*8) + Constants.Popup.separatorHeight }
+
+    private var smartTotalReadValueField: ValueField?
+    private var smartTotalWrittenValueField: ValueField?
+    private var temperatureValueField: ValueField?
+    private var healthValueField: ValueField?
+    private var powerCyclesValueField: ValueField?
+    private var powerOnHoursValueField: ValueField?
+    private var criticalWarningValueField: ValueField?
+    private var availableSpareValueField: ValueField?
+
+    private let smartCache = PopupCache<smart_t>()
+    private var heightConstraint: NSLayoutConstraint?
+
+    public init(width: CGFloat) {
+        super.init(frame: NSRect(x: 0, y: 0, width: width, height: 0))
+
+        let h = self.naturalHeight
+        self.setFrameSize(NSSize(width: width, height: h))
+        let constraint = self.heightAnchor.constraint(equalToConstant: h)
+        constraint.isActive = true
+        self.heightConstraint = constraint
+
+        let separator = separatorView(localizedString("SMART"), origin: NSPoint(x: 0, y: h-Constants.Popup.separatorHeight), width: width)
+        let container: NSStackView = NSStackView(frame: NSRect(x: 0, y: 0, width: width, height: separator.frame.origin.y))
         container.orientation = .vertical
         container.spacing = 0
-        
+
         self.smartTotalReadValueField = popupRow(container, title: "\(localizedString("Total read")):", value: "0 KB").1
         self.smartTotalWrittenValueField = popupRow(container, title: "\(localizedString("Total written")):", value: "0 KB").1
         self.temperatureValueField = popupRow(container, title: "\(localizedString("Temperature")):", value: "\(temperature(0))").1
@@ -809,38 +850,35 @@ internal class DetailsView: NSStackView {
         self.powerOnHoursValueField = popupRow(container, title: "\(localizedString("Power on hours")):", value: "0").1
         self.criticalWarningValueField = popupRow(container, title: "\(localizedString("Critical warning")):", value: localizedString("Unknown")).1
         self.availableSpareValueField = popupRow(container, title: "\(localizedString("Available spare")):", value: localizedString("Unknown")).1
-        
-        self.smartTotalReadValueField?.font = NSFont.systemFont(ofSize: 11, weight: .regular)
-        self.smartTotalWrittenValueField?.font = NSFont.systemFont(ofSize: 11, weight: .regular)
-        self.temperatureValueField?.font = NSFont.systemFont(ofSize: 11, weight: .regular)
-        self.healthValueField?.font = NSFont.systemFont(ofSize: 11, weight: .regular)
-        self.powerCyclesValueField?.font = NSFont.systemFont(ofSize: 11, weight: .regular)
-        self.powerOnHoursValueField?.font = NSFont.systemFont(ofSize: 11, weight: .regular)
-        self.criticalWarningValueField?.font = NSFont.systemFont(ofSize: 11, weight: .regular)
-        self.availableSpareValueField?.font = NSFont.systemFont(ofSize: 11, weight: .regular)
-        
-        view.addSubview(separator)
-        view.addSubview(container)
-        
-        return view
+
+        [
+            self.smartTotalReadValueField, self.smartTotalWrittenValueField,
+            self.temperatureValueField, self.healthValueField,
+            self.powerCyclesValueField, self.powerOnHoursValueField,
+            self.criticalWarningValueField, self.availableSpareValueField
+        ].forEach { $0?.font = NSFont.systemFont(ofSize: 11, weight: .regular) }
+
+        self.addSubview(separator)
+        self.addSubview(container)
     }
-    
-    public func update(stats: stats) {
-        self.statsCache.apply(stats, visible: self.window?.isVisible ?? false, render: self.renderStats)
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
     }
-    
-    private func renderStats(_ stats: stats) {
-        self.totalReadValueField?.stringValue = Units(bytes: stats.readBytes).getReadableMemory()
-        self.totalReadValueField?.toolTip = "\(stats.readBytes / (512 * 1000))"
-        self.totalWrittenValueField?.stringValue = Units(bytes: stats.writeBytes).getReadableMemory()
-        self.totalWrittenValueField?.toolTip = "\(stats.writeBytes / (512 * 1000))"
+
+    /// Follows the drive card's own details toggle. Collapsed to zero rather than removed, so the
+    /// balancer simply measures it as empty and the section registration stays put.
+    public func setVisible(_ state: Bool) {
+        self.isHidden = !state
+        let h = state ? self.naturalHeight : 0
+        self.heightConstraint?.constant = h
+        self.setFrameSize(NSSize(width: self.frame.width, height: h))
     }
-    
-    public func update(details d: drive) {
-        self.fileSystemValueField?.stringValue = d.fileSystem.isEmpty ? localizedString("Unknown") : d.fileSystem.uppercased()
-        self.connectionTypeValueField?.stringValue = d.connectionType.isEmpty ? localizedString("Unknown") : d.connectionType
+
+    public func appear() {
+        self.smartCache.replay(render: self.renderSmart)
     }
-    
+
     public func update(smart: smart_t?) {
         guard let smart else { return }
         self.smartCache.apply(smart, visible: self.window?.isVisible ?? false, render: self.renderSmart)
@@ -878,8 +916,4 @@ internal class DetailsView: NSStackView {
         }
     }
     
-    public func appear() {
-        self.statsCache.replay(render: self.renderStats)
-        self.smartCache.replay(render: self.renderSmart)
-    }
 }

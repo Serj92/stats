@@ -16,7 +16,9 @@ public struct Popup_c_s {
     public let height: CGFloat = 300
     public let margins: CGFloat = 8
     public let spacing: CGFloat = 2
-    public let headerHeight: CGFloat = 42
+    // Slimmed from 42: with two-column popups the header spans the full width, and a tall band with
+    // nothing but a centred title in it reads as wasted space.
+    public let headerHeight: CGFloat = 30
     public let separatorHeight: CGFloat = 30
     public let portalHeight: CGFloat = 120
     public let radius: CGFloat = 6

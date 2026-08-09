@@ -22,7 +22,7 @@ internal class Popup: PopupWrapper {
     private var usageCircle: PieChartView? = nil
     private var renderCircle: PieChartView? = nil
     private var tilerCircle: PieChartView? = nil
-    
+
     private var chart: LineChartView? = nil
     private var lineChartHistory: Int = 180
     private var lineChartScale: Scale = .none
@@ -39,15 +39,11 @@ internal class Popup: PopupWrapper {
     public init(_ module: ModuleType) {
         super.init(module, frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: 0))
         
-        self.orientation = .vertical
-        self.distribution = .fill
-        self.spacing = 0
-        
-        self.addArrangedSubview(self.initDashboard())
-        self.addArrangedSubview(self.initChart())
-        self.addArrangedSubview(self.initDetails())
-        
-        self.recalculateHeight()
+        // Two-column layout: the sections are handed over in reading order and the balancer decides
+        // where the columns split, so the popup is roughly half as tall as the old single stack.
+        self.makeTwoColumns()
+        self.setSections([self.initDashboard(), self.initChart(), self.initDetails()])
+        self.layoutColumns()
     }
     
     required init?(coder: NSCoder) {
@@ -62,16 +58,8 @@ internal class Popup: PopupWrapper {
         self.replay(self.loadCache, render: self.renderLoad)
     }
     
-    private func recalculateHeight() {
-        let h = self.arrangedSubviews.map({ $0.bounds.height + self.spacing }).reduce(0, +) - self.spacing
-        if self.frame.size.height != h {
-            self.setFrameSize(NSSize(width: self.frame.width, height: h))
-            self.sizeCallback?(self.frame.size)
-        }
-    }
-    
     private func initDashboard() -> NSView {
-        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: self.dashboardHeight))
+        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: self.dashboardHeight))
         view.heightAnchor.constraint(equalToConstant: view.bounds.height).isActive = true
         
         let usageSize = self.dashboardHeight-20
@@ -101,27 +89,42 @@ internal class Popup: PopupWrapper {
     }
     
     private func initChart() -> NSView  {
-        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: self.chartHeight))
-        view.heightAnchor.constraint(equalToConstant: 90 + Constants.Popup.separatorHeight).isActive = true
-        let separator = separatorView(localizedString("Usage history"), origin: NSPoint(x: 0, y: self.chartHeight-Constants.Popup.separatorHeight), width: self.frame.width)
-        let container: NSView = NSView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: separator.frame.origin.y))
+        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: self.chartHeight))
+        let height = view.heightAnchor.constraint(equalToConstant: self.chartHeight)
+        height.isActive = true
+        let separator = separatorView(localizedString("Usage history"), origin: NSPoint(x: 0, y: self.chartHeight-Constants.Popup.separatorHeight), width: Constants.Popup.width)
+        // Autoresizing keeps the pieces in place when the section is stretched: the separator stays
+        // pinned to the top, the chart box below it takes all the extra height.
+        separator.autoresizingMask = [.width, .minYMargin]
+        let container: NSView = NSView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: separator.frame.origin.y))
+        container.autoresizingMask = [.width, .height]
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.lightGray.withAlphaComponent(0.1).cgColor
         container.layer?.cornerRadius = Constants.Popup.radius
-        
+
         let chartFrame = NSRect(x: 1, y: 0, width: view.frame.width - 2, height: container.frame.height)
         self.chart = LineChartView(frame: chartFrame, num: self.lineChartHistory, scale: self.lineChartScale, fixedScale: self.lineChartFixedScale)
+        self.chart?.autoresizingMask = [.width, .height]
         container.addSubview(self.chart!)
-        
+
         view.addSubview(separator)
         view.addSubview(container)
-        
+
+        // The usage graph is what soaks up the leftover height when this column comes up short —
+        // a taller graph is a better use of the space than a gap.
+        self.setStretchable(view) { [weak self, weak view] extra in
+            guard let self else { return }
+            height.constant = self.chartHeight + extra
+            view?.setFrameSize(NSSize(width: Constants.Popup.width, height: self.chartHeight + extra))
+        }
+
         return view
     }
     
     private func initDetails() -> NSView  {
-        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: self.detailsHeight))
-        let separator = separatorView(localizedString("Details"), origin: NSPoint(x: 0, y: self.detailsHeight-Constants.Popup.separatorHeight), width: self.frame.width)
+        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: self.detailsHeight))
+        view.heightAnchor.constraint(equalToConstant: view.bounds.height).isActive = true
+        let separator = separatorView(localizedString("Details"), origin: NSPoint(x: 0, y: self.detailsHeight-Constants.Popup.separatorHeight), width: Constants.Popup.width)
         let container: NSStackView = NSStackView(frame: NSRect(x: 0, y: 0, width: view.frame.width, height: separator.frame.origin.y))
         container.orientation = .vertical
         container.spacing = 0

@@ -21,7 +21,7 @@ internal class Popup: PopupWrapper {
     private var sensors: [Sensor_p] = []
     private let settingsView: NSStackView = NSStackView()
     private let sensorsCache = PopupCache<[Sensor_p]>()
-    
+
     private var fanControlState: Bool {
         get { Store.shared.bool(key: "Sensors_fanControl", defaultValue: true) }
         set { Store.shared.set(key: "Sensors_fanControl", value: newValue) }
@@ -32,10 +32,10 @@ internal class Popup: PopupWrapper {
         
         self.fanValueState = FanValue(rawValue: Store.shared.string(key: "Sensors_popup_fanValue", defaultValue: self.fanValueState.rawValue)) ?? .percentage
         
-        self.orientation = .vertical
-        self.spacing = 0
-        self.translatesAutoresizingMaskIntoConstraints = false
-        
+        // Two-column layout: sensor groups are split across a left and right column so the popup is
+        // roughly half as tall as the old single stack. Columns are fixed 264pt; the popup is 2×264 + gap.
+        self.makeTwoColumns()
+
         self.settingsView.orientation = .vertical
         self.settingsView.spacing = Constants.Settings.margin
         
@@ -83,7 +83,8 @@ internal class Popup: PopupWrapper {
             sensors = sensors.filter({ $0.group != .unknown })
         }
         
-        self.subviews.forEach({ $0.removeFromSuperview() })
+        // Rebuilt from scratch below; layoutColumns() swaps the old sections out of the columns.
+        var sections: [NSView] = []
         if !reload {
             self.settingsView.subviews.filter({ $0.identifier == NSUserInterfaceItemIdentifier("sensor") }).forEach { v in
                 v.removeFromSuperview()
@@ -98,8 +99,7 @@ internal class Popup: PopupWrapper {
                 }
             )
             separator.widthAnchor.constraint(equalToConstant: Constants.Popup.width).isActive = true
-            self.addArrangedSubview(separator)
-            
+
             let container = NSStackView()
             container.orientation = .vertical
             container.spacing = Constants.Popup.spacing
@@ -107,16 +107,16 @@ internal class Popup: PopupWrapper {
             fans.forEach { (f: Sensor_p) in
                 if let fan = f as? Fan {
                     if f.isComputed {
-                        let sensor = SensorView(fan, width: self.frame.width, toggleable: false) {}
+                        let sensor = SensorView(fan, width: Constants.Popup.width, toggleable: false) {}
                         self.list[fan.key] = sensor
                         container.addArrangedSubview(sensor)
                     } else {
-                        let view = FanView(fan, width: self.frame.width) { [weak self] in
+                        let view = FanView(fan, width: Constants.Popup.width) { [weak self] in
                             let h = container.arrangedSubviews.map({ $0.bounds.height + container.spacing }).reduce(0, +) - container.spacing
                             if container.frame.size.height != h && h >= 0 {
                                 container.setFrameSize(NSSize(width: container.frame.width, height: h))
                             }
-                            self?.recalculateHeight()
+                            self?.layoutColumns()
                         }
                         self.list[fan.key] = view
                         container.addArrangedSubview(view)
@@ -128,7 +128,8 @@ internal class Popup: PopupWrapper {
             if container.frame.size.height != h {
                 container.setFrameSize(NSSize(width: container.frame.width, height: h))
             }
-            self.addArrangedSubview(container)
+            // Fans separator + its container form one group; keep them together in the same column.
+            sections.append(self.makeGroup([separator, container]))
         }
         
         var types: [SensorType] = []
@@ -167,22 +168,25 @@ internal class Popup: PopupWrapper {
             filtered = filtered.filter{ $0.popupState }
             if filtered.isEmpty { return }
             
-            self.addArrangedSubview(separatorView(localizedString(typ.rawValue), width: self.frame.width))
+            // A type's separator plus all of its sensor rows form one group and travel together.
+            var groupViews: [NSView] = [separatorView(localizedString(typ.rawValue), width: Constants.Popup.width)]
             groups.forEach { (group: SensorGroup) in
                 filtered.filter{ $0.group == group }.forEach { (s: Sensor_p) in
-                    let sensor = SensorView(s, width: self.frame.width) { [weak self] in
-                        self?.recalculateHeight()
+                    let sensor = SensorView(s, width: Constants.Popup.width) { [weak self] in
+                        self?.layoutColumns()
                     }
-                    self.addArrangedSubview(sensor)
+                    groupViews.append(sensor)
                     self.list[s.key] = sensor
                 }
             }
+            sections.append(self.makeGroup(groupViews))
         }
         
         if !reload {
             self.sensors = values
         }
-        self.recalculateHeight()
+        self.setSections(sections)
+        self.layoutColumns()
     }
     
     internal func usageCallback(_ values: [Sensor_p]) {
@@ -216,12 +220,19 @@ internal class Popup: PopupWrapper {
         self.replay(self.sensorsCache, render: self.renderSensors)
     }
     
-    private func recalculateHeight() {
-        let h = self.arrangedSubviews.map({ $0.bounds.height + self.spacing }).reduce(0, +) - self.spacing
-        if self.frame.size.height != h {
-            self.setFrameSize(NSSize(width: self.frame.width, height: h))
-            self.sizeCallback?(self.frame.size)
-        }
+    // A sensor group (its separator plus the rows under it) is one indivisible section, so it is
+    // wrapped in a stack of its own before being handed to the column balancer.
+    private func makeGroup(_ views: [NSView]) -> NSView {
+        let group = NSStackView()
+        group.orientation = .vertical
+        group.spacing = 0
+        group.alignment = .width
+        views.forEach { group.addArrangedSubview($0) }
+        group.setFrameSize(NSSize(
+            width: Constants.Popup.width,
+            height: views.map({ $0.bounds.height }).reduce(0, +)
+        ))
+        return group
     }
     
     // MARK: - Settings

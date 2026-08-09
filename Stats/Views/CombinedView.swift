@@ -241,6 +241,16 @@ internal class CombinedView: NSObject, NSGestureRecognizerDelegate {
 private class Popup: NSStackView, Popup_p {
     fileprivate var keyboardShortcut: [UInt16] = []
     fileprivate var sizeCallback: ((NSSize) -> Void)? = nil
+
+    // Combined details laid out as a grid instead of one tall single-column "sausage": module
+    // portals keep their native 264pt width and are placed side by side, N per row. maxColumns
+    // trades window width for height (2 → ~528pt wide, half as tall). Bump to 3 for a wider grid.
+    private let maxColumns = 2
+
+    // Standalone cards appended after the module portals — self-contained live widgets that aren't
+    // a whole-module portal. First one: the fan-control card (boost toggles + live speed), which
+    // otherwise lives only inside the CPU popup. Only shown when its daemon is installed.
+    private lazy var extraCards: [NSView] = FanControlCard.isInstalled ? [FanControlCard()] : []
     
     init() {
         self.keyboardShortcut = Store.shared.array(key: "CombinedModules_popup_keyboardShortcut", defaultValue: []) as? [UInt16] ?? []
@@ -275,18 +285,170 @@ private class Popup: NSStackView, Popup_p {
     
     @objc private func reinit() {
         self.subviews.forEach({ $0.removeFromSuperview() })
-        
-        let availableModules = modules.filter({ $0.enabled && $0.portal != nil })
-        availableModules.forEach { (m: Module) in
-            if let p = m.portal {
-                self.addArrangedSubview(p)
+
+        let portals: [NSView] = modules.filter({ $0.enabled && $0.portal != nil }).compactMap({ $0.portal })
+        let cells: [NSView] = portals + self.extraCards
+        guard !cells.isEmpty else { return }
+
+        let gap = Constants.Popup.spacing
+        let cols = min(self.maxColumns, cells.count)
+        let rowsCount = Int(ceil(Double(cells.count) / Double(cols)))
+
+        // One horizontal row per grid line; .fillEqually splits the row into equal 264pt cells.
+        // Short last rows get filler views so every cell stays a fixed 264pt (no stretching).
+        for r in 0..<rowsCount {
+            let row = NSStackView()
+            row.orientation = .horizontal
+            row.distribution = .fillEqually
+            row.spacing = gap
+            for c in 0..<cols {
+                let i = r*cols + c
+                row.addArrangedSubview(i < cells.count ? cells[i] : NSView())
             }
+            self.addArrangedSubview(row)
         }
-        
-        let h = CGFloat(availableModules.count) * Constants.Popup.portalHeight + (CGFloat(availableModules.count-1)*Constants.Popup.spacing)
-        if h > 0 {
-            self.setFrameSize(NSSize(width: self.frame.width, height: h))
-            self.sizeCallback?(self.frame.size)
+
+        let w = CGFloat(cols)*Constants.Popup.width + CGFloat(cols-1)*gap
+        let h = CGFloat(rowsCount)*Constants.Popup.portalHeight + CGFloat(rowsCount-1)*self.spacing
+        self.setFrameSize(NSSize(width: w, height: h))
+        self.sizeCallback?(self.frame.size)
+    }
+}
+
+// A self-contained fan-control card for the combined grid: the boost level toggles + a live
+// "current speed" readout, styled like a module portal (264×120). Fully autonomous — reads/writes
+// the fun-fan-control flag files directly and polls its status file on its own light timer while
+// visible, so it needs no module reader. Mirrors the fan section of the CPU popup; the two write
+// the same `boost` file and stay in sync. (Follow-up: de-dup the shared file logic between them.)
+private class FanControlCard: NSStackView {
+    static var fancurvedDir: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("fancurved")
+    }
+    static var isInstalled: Bool {
+        FileManager.default.fileExists(atPath: FanControlCard.fancurvedDir.path)
+    }
+    private var boostURL: URL { FanControlCard.fancurvedDir.appendingPathComponent("boost") }
+    private var statusURL: URL { FanControlCard.fancurvedDir.appendingPathComponent("status") }
+
+    private let levels: [(level: Int, label: String)] = [
+        (100, "Fan speed 100%"), (50, "Fan speed 50%"), (25, "Fan speed 25%")
+    ]
+    private var switches: [NSSwitch] = []
+    private var statusField: ValueField? = nil
+    private var timer: Timer? = nil
+
+    init() {
+        super.init(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: Constants.Popup.portalHeight))
+
+        self.wantsLayer = true
+        self.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        self.layer?.cornerRadius = 3
+        self.orientation = .vertical
+        self.distribution = .fill
+        self.alignment = .width
+        self.spacing = Constants.Popup.spacing
+        self.edgeInsets = NSEdgeInsets(top: 4, left: 6, bottom: 4, right: 6)
+        self.heightAnchor.constraint(equalToConstant: Constants.Popup.portalHeight).isActive = true
+
+        let header = LabelField(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: 16), localizedString("Fans"))
+        header.alignment = .center
+        header.textColor = .textColor
+        header.heightAnchor.constraint(equalToConstant: 16).isActive = true
+        self.addArrangedSubview(header)
+
+        for item in self.levels {
+            let row = NSView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: 20))
+            row.heightAnchor.constraint(equalToConstant: 20).isActive = true
+
+            let label = LabelField(frame: NSRect(x: 2, y: (20-14)/2, width: row.frame.width - 60, height: 14), localizedString(item.label), size: 11)
+            label.autoresizingMask = [.width]
+
+            let sw = NSSwitch()
+            sw.controlSize = .mini
+            sw.tag = item.level
+            sw.target = self
+            sw.action = #selector(self.toggle)
+            sw.sizeToFit()
+            sw.frame = NSRect(x: row.frame.width - sw.frame.width - 2, y: (20-sw.frame.height)/2, width: sw.frame.width, height: sw.frame.height)
+            sw.autoresizingMask = [.minXMargin]
+            self.switches.append(sw)
+
+            row.addSubview(label)
+            row.addSubview(sw)
+            self.addArrangedSubview(row)
         }
+
+        let (_, value, _) = portalRow(self, title: localizedString("Current speed"), value: "—")
+        self.statusField = value
+
+        self.addArrangedSubview(NSView())  // trailing spacer pads content to the fixed 120pt height
+
+        self.sync()
+        self.timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+            guard let self, self.window?.isVisible == true else { return }
+            self.refresh()
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    deinit { self.timer?.invalidate() }
+
+    public override func updateLayer() {
+        self.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+    }
+
+    private var currentLevel: Int? {
+        guard let data = try? Data(contentsOf: self.boostURL) else { return nil }
+        let raw = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        if raw.isEmpty { return 100 }
+        return Int(raw)
+    }
+
+    private func syncSwitches() {
+        let level = self.currentLevel
+        for sw in self.switches { sw.state = sw.tag == level ? .on : .off }
+    }
+
+    // Read the daemon's status file (same format as the CPU popup): "<pct> <rpm0,rpm1,…> <driver>".
+    private func refresh() {
+        self.syncSwitches()
+        guard let field = self.statusField else { return }
+        guard let data = try? Data(contentsOf: self.statusURL),
+              let mtime = try? self.statusURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+              Date().timeIntervalSince(mtime) < 6 else {
+            field.stringValue = "—"
+            return
+        }
+        let parts = String(decoding: data, as: UTF8.self).split(separator: " ")
+        guard parts.count >= 2, let pct = Int(parts[0]) else {
+            field.stringValue = "—"
+            return
+        }
+        let rpms = parts[1].split(separator: ",").compactMap { Int($0) }
+        let rpmStr: String
+        if rpms.isEmpty {
+            rpmStr = ""
+        } else if rpms.allSatisfy({ $0 == rpms[0] }) {
+            rpmStr = "\(rpms[0])"
+        } else {
+            rpmStr = rpms.map(String.init).joined(separator: "/")
+        }
+        field.stringValue = rpmStr.isEmpty ? "\(pct)%" : "\(rpmStr) rpm · \(pct)%"
+    }
+
+    private func sync() { self.refresh() }
+
+    @objc private func toggle(_ sender: NSSwitch) {
+        let fm = FileManager.default
+        if sender.state == .on {
+            for sw in self.switches where sw !== sender { sw.state = .off }
+            try? fm.createDirectory(at: FanControlCard.fancurvedDir, withIntermediateDirectories: true)
+            try? Data("\(sender.tag)".utf8).write(to: self.boostURL)
+        } else {
+            try? fm.removeItem(at: self.boostURL)
+        }
+        self.refresh()
     }
 }

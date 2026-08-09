@@ -89,7 +89,7 @@ internal class Popup: PopupWrapper {
     private var fanControlView: NSView? = nil
     private var fanBoostSwitches: [NSSwitch] = []
     private var fanStatusField: ValueField? = nil
-    
+
     private var lineChart: LineChartView? = nil
     private var columnChart: ColumnChartView? = nil
     private var circle: PieChartView? = nil
@@ -155,9 +155,10 @@ internal class Popup: PopupWrapper {
     public init(_ module: ModuleType) {
         super.init(module, frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: 0))
         
-        self.spacing = 0
-        self.orientation = .vertical
-        
+        // Two-column layout: split sections across a left and right column so the popup is roughly
+        // half as tall as the old single stack. Columns are fixed 264pt; the popup is 2×264 + gap.
+        self.makeTwoColumns()
+
         self.systemColorState = SColor.fromString(Store.shared.string(key: "\(self.title)_systemColor", defaultValue: self.systemColorState.key))
         self.userColorState = SColor.fromString(Store.shared.string(key: "\(self.title)_userColor", defaultValue: self.userColorState.key))
         self.idleColorState = SColor.fromString(Store.shared.string(key: "\(self.title)_idleColor", defaultValue: self.idleColorState.key))
@@ -169,14 +170,17 @@ internal class Popup: PopupWrapper {
         self.lineChartScale = Scale.fromString(Store.shared.string(key: "\(self.title)_lineChartScale", defaultValue: self.lineChartScale.key))
         self.lineChartFixedScale = Double(Store.shared.int(key: "\(self.title)_lineChartFixedScale", defaultValue: 100)) / 100
         
-        self.addArrangedSubview(self.initDashboard())
-        self.addArrangedSubview(self.initChart())
-        self.addArrangedSubview(self.initDetails())
-        self.addArrangedSubview(self.initFanControl())
-        self.addArrangedSubview(self.initAverage())
-        self.addArrangedSubview(self.initProcesses())
-        
-        self.recalculateHeight()
+        // Sections in reading order; the balancer decides where the columns split. "Frequency" is
+        // absent on purpose — it only exists once the first frequency read lands (renderFrequency).
+        self.setSections([
+            self.initDashboard(),
+            self.initChart(),
+            self.initDetails(),
+            self.initFanControl(),
+            self.initAverage(),
+            self.initProcesses()
+        ])
+        self.layoutColumns()
     }
     
     required init?(coder: NSCoder) {
@@ -202,23 +206,8 @@ internal class Popup: PopupWrapper {
         self.processes?.setLock(false)
     }
     
-    private func recalculateHeight() {
-        var h: CGFloat = 0
-        self.arrangedSubviews.forEach { v in
-            if let v = v as? NSStackView {
-                h += v.arrangedSubviews.map({ $0.bounds.height + v.spacing }).reduce(0, +)
-            } else {
-                h += v.bounds.height
-            }
-        }
-        if self.frame.size.height != h {
-            self.setFrameSize(NSSize(width: self.frame.width, height: h))
-            self.sizeCallback?(self.frame.size)
-        }
-    }
-    
     private func initDashboard() -> NSView {
-        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: self.dashboardHeight))
+        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: self.dashboardHeight))
         view.heightAnchor.constraint(equalToConstant: view.bounds.height).isActive = true
         
         let usageSize = self.dashboardHeight-20
@@ -250,25 +239,31 @@ internal class Popup: PopupWrapper {
     }
     
     private func initChart() -> NSView {
-        let view: NSStackView = NSStackView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: self.chartHeight))
-        view.heightAnchor.constraint(equalToConstant: view.bounds.height).isActive = true
+        let view: NSStackView = NSStackView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: self.chartHeight))
+        let sectionHeight = view.heightAnchor.constraint(equalToConstant: self.chartHeight)
+        sectionHeight.isActive = true
         view.orientation = .vertical
         view.spacing = Constants.Popup.spacing
-        
-        let separator = separatorView(localizedString("Usage history"), origin: NSPoint(x: 0, y: 0), width: self.frame.width)
-        
+
+        let separator = separatorView(localizedString("Usage history"), origin: NSPoint(x: 0, y: 0), width: Constants.Popup.width)
+
+        let lineChartBase: CGFloat = 70
+        var lineChartHeight: NSLayoutConstraint? = nil
         let lineChartContainer: NSView = {
-            let box: NSView = NSView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: 70))
-            box.heightAnchor.constraint(equalToConstant: box.frame.height).isActive = true
+            let box: NSView = NSView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: lineChartBase))
+            let h = box.heightAnchor.constraint(equalToConstant: lineChartBase)
+            h.isActive = true
+            lineChartHeight = h
             box.wantsLayer = true
             box.layer?.backgroundColor = NSColor.lightGray.withAlphaComponent(0.1).cgColor
             box.layer?.cornerRadius = Constants.Popup.radius
-            
+
             let chartFrame = NSRect(x: 1, y: 0, width: box.frame.width - 2, height: box.frame.height)
             self.lineChart = LineChartView(frame: chartFrame, num: self.lineChartHistory, scale: self.lineChartScale, fixedScale: self.lineChartFixedScale)
             self.lineChart?.setColor(self.chartColor)
+            self.lineChart?.autoresizingMask = [.width, .height]
             box.addSubview(self.lineChart!)
-            
+
             return box
         }()
         
@@ -277,7 +272,7 @@ internal class Popup: PopupWrapper {
         
         if let cores = SystemKit.shared.device.info.cpu?.logicalCores {
             let barChartContainer: NSView = {
-                let box: NSView = NSView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: 50))
+                let box: NSView = NSView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: 50))
                 box.heightAnchor.constraint(equalToConstant: box.frame.height).isActive = true
                 box.wantsLayer = true
                 box.layer?.backgroundColor = NSColor.lightGray.withAlphaComponent(0.1).cgColor
@@ -297,17 +292,27 @@ internal class Popup: PopupWrapper {
             }()
             view.addArrangedSubview(barChartContainer)
         }
-        
+
+        // The line chart is what soaks up the leftover height when this column comes up short — a
+        // taller graph is a better use of the space than a gap. The per-core bars keep their size.
+        self.setStretchable(view) { [weak self, weak view, weak lineChartContainer] extra in
+            guard let self else { return }
+            sectionHeight.constant = self.chartHeight + extra
+            lineChartHeight?.constant = lineChartBase + extra
+            lineChartContainer?.setFrameSize(NSSize(width: Constants.Popup.width, height: lineChartBase + extra))
+            view?.setFrameSize(NSSize(width: Constants.Popup.width, height: self.chartHeight + extra))
+        }
+
         return view
     }
-    
+
     private func initDetails() -> NSView {
-        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: self.detailsHeight))
+        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: self.detailsHeight))
         view.heightAnchor.constraint(equalToConstant: view.bounds.height).isActive = true
         let separator = separatorView(localizedString("Details"), origin: NSPoint(
             x: 0,
             y: self.detailsHeight-Constants.Popup.separatorHeight
-        ), width: self.frame.width)
+        ), width: Constants.Popup.width)
         let container: NSStackView = NSStackView(frame: NSRect(x: 0, y: 0, width: view.frame.width, height: separator.frame.origin.y))
         container.orientation = .vertical
         container.spacing = 0
@@ -341,9 +346,9 @@ internal class Popup: PopupWrapper {
     }
     
     private func initAverage() -> NSView {
-        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: self.averageHeight))
+        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: self.averageHeight))
         view.heightAnchor.constraint(equalToConstant: view.bounds.height).isActive = true
-        let separator = separatorView(localizedString("Average load"), origin: NSPoint(x: 0, y: self.averageHeight-Constants.Popup.separatorHeight), width: self.frame.width)
+        let separator = separatorView(localizedString("Average load"), origin: NSPoint(x: 0, y: self.averageHeight-Constants.Popup.separatorHeight), width: Constants.Popup.width)
         let container: NSStackView = NSStackView(frame: NSRect(x: 0, y: 0, width: view.frame.width, height: separator.frame.origin.y))
         container.orientation = .vertical
         container.spacing = 0
@@ -391,12 +396,12 @@ internal class Popup: PopupWrapper {
         }
 
         self.fanBoostSwitches = []
-        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: self.fanControlHeight))
+        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: self.fanControlHeight))
         view.heightAnchor.constraint(equalToConstant: view.bounds.height).isActive = true
         let separator = separatorView(localizedString("Fans"), origin: NSPoint(
             x: 0,
             y: self.fanControlHeight-Constants.Popup.separatorHeight
-        ), width: self.frame.width)
+        ), width: Constants.Popup.width)
         let container: NSStackView = NSStackView(frame: NSRect(x: 0, y: 0, width: view.frame.width, height: separator.frame.origin.y))
         container.orientation = .vertical
         container.spacing = 0
@@ -486,12 +491,15 @@ internal class Popup: PopupWrapper {
         } else {
             try? fm.removeItem(at: self.fanBoostURL)
         }
+        // Snappy feedback: re-read now (the daemon republishes the new speed within a tick, and the
+        // per-load heartbeat keeps it current after that).
+        self.refreshFanStatus()
     }
 
     private func initFrequency() -> NSView {
-        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: self.frequencyHeight))
+        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: self.frequencyHeight))
         view.heightAnchor.constraint(equalToConstant: view.bounds.height).isActive = true
-        let separator = separatorView(localizedString("Frequency"), origin: NSPoint(x: 0, y: self.frequencyHeight-Constants.Popup.separatorHeight), width: self.frame.width)
+        let separator = separatorView(localizedString("Frequency"), origin: NSPoint(x: 0, y: self.frequencyHeight-Constants.Popup.separatorHeight), width: Constants.Popup.width)
         let container: NSStackView = NSStackView(frame: NSRect(x: 0, y: 0, width: view.frame.width, height: separator.frame.origin.y))
         container.orientation = .vertical
         container.spacing = 0
@@ -523,10 +531,14 @@ internal class Popup: PopupWrapper {
             return v
         }
         
-        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: self.processesHeight))
-        let separator = separatorView(localizedString("Top processes"), origin: NSPoint(x: 0, y: self.processesHeight-Constants.Popup.separatorHeight), width: self.frame.width)
+        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: self.processesHeight))
+        // Without this the section has no height as far as auto layout is concerned: the column
+        // treats it as empty and its frame-positioned rows spill from the bottom edge upwards,
+        // leaving a hole above them.
+        view.heightAnchor.constraint(equalToConstant: view.bounds.height).isActive = true
+        let separator = separatorView(localizedString("Top processes"), origin: NSPoint(x: 0, y: self.processesHeight-Constants.Popup.separatorHeight), width: Constants.Popup.width)
         let container: ProcessesView = ProcessesView(
-            frame: NSRect(x: 0, y: 0, width: self.frame.width, height: separator.frame.origin.y),
+            frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: separator.frame.origin.y),
             values: [(localizedString("Usage"), nil)],
             n: self.numberOfProcesses
         )
@@ -542,7 +554,13 @@ internal class Popup: PopupWrapper {
     public func loadCallback(_ value: CPU_Load) {
         self.apply(value, to: self.loadCache, render: self.renderLoad)
         self.lineChart?.addValue(value.totalUsage)
-        if self.window?.isVisible == true { self.refreshFanStatus() }
+        // This callback arrives on a background reader thread. NSView.window and NSTextField
+        // mutation must happen on the main thread — off-main, self.window reads nil so the
+        // status never refreshed after appear(). Marshal to main like apply() does.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.window?.isVisible == true else { return }
+            self.refreshFanStatus()
+        }
     }
     
     private func renderLoad(_ value: CPU_Load) {
@@ -610,8 +628,9 @@ internal class Popup: PopupWrapper {
     
     private func renderFrequency(_ value: CPU_Frequency) {
         if !self.frequencyCache.initialized {
-            self.insertArrangedSubview(self.initFrequency(), at: 4)
-            self.recalculateHeight()
+            // Canonical order: after the fan-control section, before "Average load".
+            self.insertSection(self.initFrequency(), at: 4)
+            self.layoutColumns()
         }
         if let view = self.frequencyCircle, (view as NSView).isHidden {
             view.isHidden = false
@@ -665,12 +684,15 @@ internal class Popup: PopupWrapper {
         if self.processes?.count == self.numberOfProcesses { return }
         
         DispatchQueue.main.async(execute: {
-            self.processesView?.removeFromSuperview()
+            if let old = self.processesView {
+                self.removeSection(old)
+                old.removeFromSuperview()
+            }
             self.processesView = nil
             self.processes = nil
-            self.addArrangedSubview(self.initProcesses())
+            self.appendSection(self.initProcesses())
             self.initializedProcesses = false
-            self.recalculateHeight()
+            self.layoutColumns()
         })
     }
     

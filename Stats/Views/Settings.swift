@@ -85,7 +85,9 @@ class SettingsWindow: NSWindow, NSWindowDelegate, NSToolbarDelegate {
             self.positionCenter()
         }
         self.setIsVisible(false)
-        self.minSize = NSSize(width: SettingsWindow.size.width, height: SettingsWindow.size.height-Constants.Popup.headerHeight)
+        // Was Constants.Popup.headerHeight; pinned to its old value so slimming the popup header
+        // does not drag the settings window's geometry along with it.
+        self.minSize = NSSize(width: SettingsWindow.size.width, height: SettingsWindow.size.height-42)
         
         let windowController = NSWindowController()
         windowController.window = self
@@ -270,7 +272,7 @@ private class MainView: NSView {
             
             self.container.leadingAnchor.constraint(equalTo: leadingAnchor),
             self.container.trailingAnchor.constraint(equalTo: trailingAnchor),
-            self.container.topAnchor.constraint(equalTo: topAnchor, constant: Constants.Popup.headerHeight*1.4),
+            self.container.topAnchor.constraint(equalTo: topAnchor, constant: 42*1.4),
             self.container.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
     }

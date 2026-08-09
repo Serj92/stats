@@ -45,7 +45,19 @@ open class PopupWrapper: NSStackView, Popup_p {
     public var title: String
     public var keyboardShortcut: [UInt16] = []
     open var sizeCallback: ((NSSize) -> Void)? = nil
-    
+
+    // Two-column layout state; unused by popups that stay single-column.
+    private var columnLeft: NSStackView? = nil
+    private var columnRight: NSStackView? = nil
+    private var sections: [NSView] = []
+    private var stretchHandlers: [ObjectIdentifier: (CGFloat) -> Void] = [:]
+    private var appliedStretch: [ObjectIdentifier: CGFloat] = [:]
+    /// Ceiling on how far a single section may be inflated to close the gap. Deliberately small: a
+    /// chart only fills the fraction of its box that the value calls for, so a graph stretched much
+    /// past its natural size is just grey emptiness with a trace along the bottom — worse-looking
+    /// than the gap it was closing. Anything above this stays as a strip at the bottom instead.
+    private let maxStretch: CGFloat = 60
+
     public init(_ typ: ModuleType, frame: NSRect) {
         self.title = typ.stringValue
         self.keyboardShortcut = Store.shared.array(key: "\(typ.stringValue)_popup_keyboardShortcut", defaultValue: []) as? [UInt16] ?? []
@@ -75,6 +87,145 @@ open class PopupWrapper: NSStackView, Popup_p {
     
     public func replay<T>(_ cache: PopupCache<T>, render: (T) -> Void) {
         cache.replay(render: render)
+    }
+
+    // MARK: - balanced two-column layout
+
+    /// Turn the popup into two side-by-side columns of the standard 264pt width. Sections are
+    /// registered separately with `setSections`; single-column popups never call this.
+    public func makeTwoColumns() {
+        self.orientation = .horizontal
+        self.distribution = .fillEqually
+        self.alignment = .top
+        self.spacing = Constants.Popup.margins
+
+        let left = NSStackView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: 0))
+        let right = NSStackView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: 0))
+        for col in [left, right] {
+            col.orientation = .vertical
+            col.spacing = 0
+            col.alignment = .width
+        }
+        self.columnLeft = left
+        self.columnRight = right
+        self.addArrangedSubview(left)
+        self.addArrangedSubview(right)
+        self.setFrameSize(NSSize(width: Constants.Popup.width*2 + self.spacing, height: 0))
+    }
+
+    /// Register the sections in canonical top-to-bottom reading order. Which column each one ends
+    /// up in is decided by `layoutColumns`, not here.
+    public func setSections(_ views: [NSView]) {
+        self.sections = views
+    }
+
+    /// Both of these drop any existing registration of the view first, so a section that is toggled
+    /// off and back on cannot end up in the list twice.
+    public func insertSection(_ view: NSView, at index: Int) {
+        self.sections.removeAll(where: { $0 === view })
+        self.sections.insert(view, at: max(0, min(index, self.sections.count)))
+    }
+
+    public func appendSection(_ view: NSView) {
+        self.sections.removeAll(where: { $0 === view })
+        self.sections.append(view)
+    }
+
+    public func removeSection(_ view: NSView) {
+        self.sections.removeAll(where: { $0 === view })
+        self.stretchHandlers.removeValue(forKey: ObjectIdentifier(view))
+        self.appliedStretch.removeValue(forKey: ObjectIdentifier(view))
+    }
+
+    /// Mark a section as able to soak up leftover height. The handler receives the absolute number
+    /// of extra points to add on top of the section's natural height (0 resets it), so it can be
+    /// called repeatedly without accumulating.
+    public func setStretchable(_ view: NSView, _ handler: @escaping (CGFloat) -> Void) {
+        self.stretchHandlers[ObjectIdentifier(view)] = handler
+    }
+
+    /// Deal the registered sections into the two columns and resize the popup.
+    ///
+    /// The canonical order is preserved — the first N sections go left, the rest go right — and the
+    /// cut is picked to leave as little empty space as possible. Up to `maxStretch` of the height
+    /// difference is handed to a stretchable section in the shorter column; whatever the cap or the
+    /// absence of a stretchable section leaves over lands as a strip along the bottom of the
+    /// shorter column, rather than a hole carved out of one side.
+    public func layoutColumns() {
+        guard let left = self.columnLeft, let right = self.columnRight, self.sections.count > 1 else { return }
+
+        let heights = self.sections.map { self.naturalHeight($0) }
+        let total = heights.reduce(0, +)
+
+        var bestCut: Int = 1
+        var bestStretch: CGFloat = 0
+        var bestCost: CGFloat = .greatestFiniteMagnitude
+        for cut in 1..<self.sections.count {
+            let leftH = heights[0..<cut].reduce(0, +)
+            let gap = abs(leftH - (total - leftH))
+            let shorter = leftH < (total - leftH) ? 0..<cut : cut..<self.sections.count
+            let canStretch = shorter.contains(where: {
+                self.stretchHandlers[ObjectIdentifier(self.sections[$0])] != nil
+            })
+            // Absorb what the cap allows and score the cut by what is still left over, so a cut
+            // that lands nearly balanced on its own beats one that only looks flush because a
+            // section was blown out of shape to get there.
+            let stretch = canStretch ? min(gap, self.maxStretch) : 0
+            let cost = gap - stretch
+            if cost < bestCost {
+                bestCost = cost
+                bestCut = cut
+                bestStretch = stretch
+            }
+        }
+
+        // Undo previous stretching before re-applying: `heights` above is already net of it.
+        self.sections.forEach { v in
+            let id = ObjectIdentifier(v)
+            guard let applied = self.appliedStretch[id], applied != 0 else { return }
+            self.stretchHandlers[id]?(0)
+            self.appliedStretch[id] = 0
+        }
+
+        self.fill(left, with: Array(self.sections[0..<bestCut]))
+        self.fill(right, with: Array(self.sections[bestCut...]))
+
+        let leftH = heights[0..<bestCut].reduce(0, +)
+        if bestStretch > 0 {
+            let shorter = leftH < (total - leftH) ? 0..<bestCut : bestCut..<self.sections.count
+            if let v = self.sections[shorter].first(where: { self.stretchHandlers[ObjectIdentifier($0)] != nil }) {
+                self.stretchHandlers[ObjectIdentifier(v)]?(bestStretch)
+                self.appliedStretch[ObjectIdentifier(v)] = bestStretch
+            }
+        }
+
+        let h = max(leftH, total - leftH)
+        let w = Constants.Popup.width*2 + self.spacing
+        if self.frame.size.height != h || self.frame.size.width != w {
+            self.setFrameSize(NSSize(width: w, height: h))
+            self.sizeCallback?(self.frame.size)
+        }
+    }
+
+    private func fill(_ column: NSStackView, with views: [NSView]) {
+        guard column.arrangedSubviews != views else { return }
+        column.arrangedSubviews.forEach {
+            column.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
+        views.forEach { column.addArrangedSubview($0) }
+    }
+
+    /// Height the section would have with no stretching applied. Sections built as a stack measure
+    /// by their arranged subviews; the rest report their own bounds.
+    private func naturalHeight(_ view: NSView) -> CGFloat {
+        var h: CGFloat = 0
+        if let stack = view as? NSStackView {
+            h = stack.arrangedSubviews.map({ $0.bounds.height + stack.spacing }).reduce(0, +)
+        } else {
+            h = view.bounds.height
+        }
+        return h - (self.appliedStretch[ObjectIdentifier(view)] ?? 0)
     }
 }
 
@@ -270,6 +421,9 @@ internal class PopupView: NSView {
             width: size.width - (Constants.Popup.margins*2) + (isScrollVisible ? 20 : 0),
             height: size.height - Constants.Popup.headerHeight - (Constants.Popup.margins*2)
         ))
+        // The header is built once at the module's initial width; without this it keeps that width
+        // forever and a wider popup gets a half-empty header band with the title off to one side.
+        self.header.setFrameSize(NSSize(width: size.width, height: Constants.Popup.headerHeight))
         self.header.setFrameOrigin(NSPoint(x: 0, y: size.height - Constants.Popup.headerHeight))
         
         if let view = view {
@@ -334,6 +488,7 @@ internal class PopupView: NSView {
             width: windowSize.width - (Constants.Popup.margins*2) + (isScrollVisible ? 20 : 0),
             height: windowSize.height - Constants.Popup.headerHeight - (Constants.Popup.margins*2)
         ))
+        self.header.setFrameSize(NSSize(width: windowSize.width, height: Constants.Popup.headerHeight))
         self.header.setFrameOrigin(NSPoint(
             x: self.header.frame.origin.x,
             y: self.body.frame.height + (Constants.Popup.margins*2)
@@ -352,7 +507,11 @@ internal class PopupView: NSView {
 internal class HeaderView: NSStackView {
     private var titleView: NSTextField? = nil
     private var activityButton: NSButton?
-    
+    /// Kept so the title can re-span the header when the popup is wider than the width this view
+    /// was built at (two-column popups).
+    private var titleWidth: NSLayoutConstraint? = nil
+    private var buttonsWidth: CGFloat = 0
+
     private var title: String = ""
     private var isCloseAction: Bool = false
     private let activityMonitor: URL?
@@ -372,7 +531,9 @@ internal class HeaderView: NSStackView {
         
         let activity = NSButtonWithPadding()
         activity.frame = CGRect(x: 0, y: 0, width: 24, height: self.frame.height)
-        activity.horizontalPadding = activity.frame.height - 24
+        // Was derived from the header height; pinned so slimming the band does not shove the two
+        // corner icons out to the very edges.
+        activity.horizontalPadding = 18
         activity.bezelStyle = .regularSquare
         activity.translatesAutoresizingMaskIntoConstraints = false
         activity.imageScaling = .scaleNone
@@ -398,7 +559,7 @@ internal class HeaderView: NSStackView {
         
         let settings = NSButtonWithPadding()
         settings.frame = CGRect(x: 0, y: 0, width: 24, height: self.frame.height)
-        settings.horizontalPadding = activity.frame.height - 24
+        settings.horizontalPadding = 18
         settings.bezelStyle = .regularSquare
         settings.translatesAutoresizingMaskIntoConstraints = false
         settings.imageScaling = .scaleNone
@@ -414,17 +575,22 @@ internal class HeaderView: NSStackView {
         self.addArrangedSubview(title)
         self.addArrangedSubview(settings)
         
-        NSLayoutConstraint.activate([
-            title.widthAnchor.constraint(
-                equalToConstant: self.frame.width - activity.intrinsicContentSize.width - settings.intrinsicContentSize.width
-            )
-        ])
+        self.buttonsWidth = activity.intrinsicContentSize.width + settings.intrinsicContentSize.width
+        let titleWidth = title.widthAnchor.constraint(equalToConstant: self.frame.width - self.buttonsWidth)
+        self.titleWidth = titleWidth
+        NSLayoutConstraint.activate([titleWidth])
     }
-    
+
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
-    
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        // Title takes whatever the two side buttons leave, so it stays centred on the popup.
+        self.titleWidth?.constant = max(0, newSize.width - self.buttonsWidth)
+    }
+
     fileprivate func setTitle(_ newTitle: String) {
         self.title = newTitle
         self.titleView?.stringValue = localizedString(newTitle)

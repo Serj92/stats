@@ -20,25 +20,48 @@ internal class Popup: PopupWrapper {
     private var calendarView: CalendarView? = nil
     private var calendarState: Bool = true
     private var weekNumbersState: Bool = false
-    
+
+    // Two-column popup: the calendar lives alone in the left column, the world-clock rows stack in
+    // the right column, instead of everything in one tall vertical stack.
+    private var leftColumn: NSStackView? = nil
+    private var rightColumn: NSStackView? = nil
+
     public init(_ module: ModuleType) {
         super.init(module, frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: 0))
-        
-        self.orientation = .vertical
+
+        // Two-column layout: split content across a left and right column so the popup is roughly
+        // half as tall as the old single stack. Columns are fixed Constants.Popup.width; the popup
+        // is 2× that plus the gap. Columns keep Constants.Popup.margins spacing so the card-style
+        // calendar and clock rows stay visually separated (unlike CPU's self-spaced sections).
         self.spacing = Constants.Popup.margins
-        
+        self.orientation = .horizontal
+        self.distribution = .fillEqually
+        self.alignment = .top
+        let left = NSStackView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: 0))
+        let right = NSStackView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: 0))
+        for col in [left, right] {
+            col.orientation = .vertical
+            col.spacing = Constants.Popup.margins
+            col.alignment = .width
+        }
+        self.leftColumn = left
+        self.rightColumn = right
+        self.addArrangedSubview(left)
+        self.addArrangedSubview(right)
+        self.setFrameSize(NSSize(width: Constants.Popup.width*2 + self.spacing, height: 0))
+
         self.calendarState = Store.shared.bool(key: "\(self.title)_calendar", defaultValue: self.calendarState)
         self.weekNumbersState = Store.shared.bool(key: "\(self.title)_calendarWeekNumbers", defaultValue: self.weekNumbersState)
-        self.calendarView = CalendarView(self.frame.width, showWeekNumbers: self.weekNumbersState)
-        
+        self.calendarView = CalendarView(Constants.Popup.width, showWeekNumbers: self.weekNumbersState)
+
         self.orderTableView.reorderCallback = { [weak self] in
             self?.rearrange()
         }
-        
+
         if let calendar = self.calendarView, self.calendarState {
-            self.addArrangedSubview(calendar)
+            left.addArrangedSubview(calendar)
         }
-        
+
         self.recalculateHeight()
     }
     
@@ -59,28 +82,34 @@ internal class Popup: PopupWrapper {
         defer { self.recalculateHeight() }
         
         let sorted = list.sorted(by: { $0.popupIndex < $1.popupIndex }).filter({ $0.popupState })
-        var views = self.subviews.filter{ $0 is ClockView }.compactMap{ $0 as? ClockView }
-        
+        var views = self.rightColumn?.arrangedSubviews.filter{ $0 is ClockView }.compactMap{ $0 as? ClockView } ?? []
+
         if sorted.count < views.count && !views.isEmpty {
             views.forEach{ $0.removeFromSuperview() }
             views = []
         }
-        
+
         sorted.forEach { (c: Clock_t) in
             if let view = views.first(where: { $0.clock.id == c.id }) {
                 view.update(c)
             } else {
-                self.addArrangedSubview(ClockView(width: self.frame.width, clock: c))
+                self.rightColumn?.addArrangedSubview(ClockView(width: Constants.Popup.width, clock: c))
             }
         }
         
         self.list = sorted
     }
     
+    private func columnHeight(_ col: NSStackView?) -> CGFloat {
+        guard let col, !col.arrangedSubviews.isEmpty else { return 0 }
+        return col.arrangedSubviews.map({ $0.fittingSize.height + col.spacing }).reduce(0, +) - col.spacing
+    }
     private func recalculateHeight() {
-        let h = self.arrangedSubviews.map({ $0.fittingSize.height + self.spacing }).reduce(0, +) - self.spacing
-        if h > 0 && self.frame.size.height != h {
-            self.setFrameSize(NSSize(width: self.frame.width, height: h))
+        // Popup height is the taller of the two columns; width is the two fixed columns plus the gap.
+        let h = max(self.columnHeight(self.leftColumn), self.columnHeight(self.rightColumn))
+        let w = Constants.Popup.width*2 + self.spacing
+        if h > 0 && (self.frame.size.height != h || self.frame.size.width != w) {
+            self.setFrameSize(NSSize(width: w, height: h))
             self.sizeCallback?(self.frame.size)
         }
     }
@@ -116,11 +145,11 @@ internal class Popup: PopupWrapper {
             self.calendarView?.checkCurrentDay()
         }
         self.cache.replay(render: self.render)
-        self.subviews.compactMap { $0 as? ClockView }.forEach { $0.appear() }
+        self.rightColumn?.arrangedSubviews.compactMap { $0 as? ClockView }.forEach { $0.appear() }
     }
     
     private func rearrange() {
-        let views = self.subviews.filter{ $0 is ClockView }.compactMap{ $0 as? ClockView }
+        let views = self.rightColumn?.arrangedSubviews.filter{ $0 is ClockView }.compactMap{ $0 as? ClockView } ?? []
         views.forEach{ $0.removeFromSuperview() }
         self.callback(self.list)
     }
@@ -131,7 +160,7 @@ internal class Popup: PopupWrapper {
         
         guard let view = self.calendarView else { return }
         if self.calendarState {
-            self.insertArrangedSubview(view, at: 0)
+            self.leftColumn?.insertArrangedSubview(view, at: 0)
         } else {
             view.removeFromSuperview()
         }

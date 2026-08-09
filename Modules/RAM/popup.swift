@@ -13,8 +13,6 @@ import Cocoa
 import Kit
 
 internal class Popup: PopupWrapper {
-    private var grid: NSGridView? = nil
-    
     private let dashboardHeight: CGFloat = 90
     private let chartHeight: CGFloat = 90 + Constants.Popup.separatorHeight
     private let detailsHeight: CGFloat = (22*6) + Constants.Popup.separatorHeight + 16
@@ -44,7 +42,8 @@ internal class Popup: PopupWrapper {
     private let loadCache = PopupCache<RAM_Usage>()
     
     private var processes: ProcessesView? = nil
-    
+    private var processesView: NSView? = nil
+
     private var numberOfProcesses: Int {
         Store.shared.int(key: "\(self.title)_processes", defaultValue: 8)
     }
@@ -69,14 +68,12 @@ internal class Popup: PopupWrapper {
     private var chartColor: NSColor { self.chartColorState.additional as? NSColor ?? NSColor.systemBlue }
     
     public init(_ module: ModuleType) {
-        super.init(module, frame: NSRect(
-            x: 0,
-            y: 0,
-            width: Constants.Popup.width,
-            height: dashboardHeight + chartHeight + detailsHeight
-        ))
-        self.setFrameSize(NSSize(width: self.frame.width, height: self.frame.height+self.processesHeight))
-        
+        super.init(module, frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: 0))
+
+        // Two-column layout: split sections across a left and right column so the popup is roughly
+        // half as tall as the old single stack. Columns are fixed 264pt; the popup is 2×264 + gap.
+        self.makeTwoColumns()
+
         self.appColorState = SColor.fromString(Store.shared.string(key: "\(self.title)_appColor", defaultValue: self.appColorState.key))
         self.wiredColorState = SColor.fromString(Store.shared.string(key: "\(self.title)_wiredColor", defaultValue: self.wiredColorState.key))
         self.compressedColorState = SColor.fromString(Store.shared.string(key: "\(self.title)_compressedColor", defaultValue: self.compressedColorState.key))
@@ -85,22 +82,15 @@ internal class Popup: PopupWrapper {
         self.lineChartHistory = Store.shared.int(key: "\(self.title)_lineChartHistory", defaultValue: self.lineChartHistory)
         self.lineChartScale = Scale.fromString(Store.shared.string(key: "\(self.title)_lineChartScale", defaultValue: self.lineChartScale.key))
         self.lineChartFixedScale = Double(Store.shared.int(key: "\(self.title)_lineChartFixedScale", defaultValue: 100)) / 100
-        
-        let gridView: NSGridView = NSGridView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: self.frame.height))
-        gridView.rowSpacing = 0
-        gridView.yPlacement = .fill
-        
-        gridView.addRow(with: [self.initDashboard()])
-        gridView.addRow(with: [self.initChart()])
-        gridView.addRow(with: [self.initDetails()])
-        gridView.addRow(with: [self.initProcesses()])
-        
-        gridView.row(at: 0).height = self.dashboardHeight
-        gridView.row(at: 1).height = self.chartHeight
-        gridView.row(at: 2).height = self.detailsHeight
-        
-        self.addSubview(gridView)
-        self.grid = gridView
+
+        // Sections in reading order; the balancer decides where the columns split.
+        self.setSections([
+            self.initDashboard(),
+            self.initChart(),
+            self.initDetails(),
+            self.initProcesses()
+        ])
+        self.layoutColumns()
     }
     
     required init?(coder: NSCoder) {
@@ -118,40 +108,42 @@ internal class Popup: PopupWrapper {
     public override func disappear() {
         self.processes?.setLock(false)
     }
-    
+
     public func numberOfProcessesUpdated() {
         if self.processes?.count == self.numberOfProcesses { return }
-        
+
         DispatchQueue.main.async(execute: {
-            let h: CGFloat = self.dashboardHeight + self.chartHeight + self.detailsHeight + self.processesHeight
-            self.setFrameSize(NSSize(width: self.frame.width, height: h))
-            
-            self.grid?.setFrameSize(NSSize(width: self.frame.width, height: h))
-            
-            self.grid?.row(at: 3).cell(at: 0).contentView?.removeFromSuperview()
+            if let old = self.processesView {
+                self.removeSection(old)
+                old.removeFromSuperview()
+            }
+            self.processesView = nil
             self.processes = nil
-            self.grid?.removeRow(at: 3)
-            self.grid?.addRow(with: [self.initProcesses()])
+            self.appendSection(self.initProcesses())
             self.processesInitialized = false
-            
-            self.sizeCallback?(self.frame.size)
+            self.layoutColumns()
         })
     }
     
     private func initDashboard() -> NSView {
-        let view = NSStackView()
-        view.heightAnchor.constraint(equalToConstant: self.dashboardHeight).isActive = true
-        view.orientation = .horizontal
-        view.distribution = .fillEqually
-        
+        // Fixed-height wrapper so the two-column layout can measure this section (columnHeight reads
+        // bounds.height); the charts live in a horizontal stack pinned to the wrapper's edges.
+        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: self.dashboardHeight))
+        view.heightAnchor.constraint(equalToConstant: view.bounds.height).isActive = true
+
+        let stack = NSStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.orientation = .horizontal
+        stack.distribution = .fillEqually
+
         let circle = PieChartView(drawValue: true)
         circle.translatesAutoresizingMaskIntoConstraints = false
         circle.toolTip = localizedString("Memory usage")
         self.circle = circle
-        
+
         let circleContainer = NSView()
         circleContainer.addSubview(circle)
-        
+
         let gauge = GaugeChartView(segments: [
             ColorValue(1/3, color: NSColor.systemGreen),
             ColorValue(1/3, color: NSColor.systemYellow),
@@ -160,50 +152,74 @@ internal class Popup: PopupWrapper {
         gauge.translatesAutoresizingMaskIntoConstraints = false
         gauge.toolTip = localizedString("Memory pressure")
         self.level = gauge
-        
+
         let gaugeContainer = NSView()
         gaugeContainer.addSubview(gauge)
-        
+
         NSLayoutConstraint.activate([
             circle.widthAnchor.constraint(equalToConstant: 70),
             circle.heightAnchor.constraint(equalToConstant: 70),
             circle.centerXAnchor.constraint(equalTo: circleContainer.centerXAnchor, constant: -15),
             circle.centerYAnchor.constraint(equalTo: circleContainer.centerYAnchor),
-            
+
             gauge.widthAnchor.constraint(equalToConstant: 70),
             gauge.heightAnchor.constraint(equalToConstant: 60),
             gauge.centerXAnchor.constraint(equalTo: gaugeContainer.centerXAnchor, constant: 15),
             gauge.centerYAnchor.constraint(equalTo: gaugeContainer.centerYAnchor)
         ])
-        
-        view.addArrangedSubview(gaugeContainer)
-        view.addArrangedSubview(circleContainer)
-        
+
+        stack.addArrangedSubview(gaugeContainer)
+        stack.addArrangedSubview(circleContainer)
+
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: view.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+
         return view
     }
     
     private func initChart() -> NSView  {
-        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: self.chartHeight))
-        let separator = separatorView(localizedString("Usage history"), origin: NSPoint(x: 0, y: self.chartHeight-Constants.Popup.separatorHeight), width: self.frame.width)
-        let container: NSView = NSView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: separator.frame.origin.y))
+        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: self.chartHeight))
+        let height = view.heightAnchor.constraint(equalToConstant: self.chartHeight)
+        height.isActive = true
+        let separator = separatorView(localizedString("Usage history"), origin: NSPoint(x: 0, y: self.chartHeight-Constants.Popup.separatorHeight), width: Constants.Popup.width)
+        // Autoresizing keeps the pieces in place when the section is stretched: the separator stays
+        // pinned to the top, the chart box below it takes all the extra height.
+        separator.autoresizingMask = [.width, .minYMargin]
+        let container: NSView = NSView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: separator.frame.origin.y))
+        container.autoresizingMask = [.width, .height]
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.lightGray.withAlphaComponent(0.1).cgColor
         container.layer?.cornerRadius = Constants.Popup.radius
-        
+
         let chartFrame = NSRect(x: 1, y: 0, width: view.frame.width - 2, height: container.frame.height)
         self.chart = LineChartView(frame: chartFrame, num: self.lineChartHistory, scale: self.lineChartScale, fixedScale: self.lineChartFixedScale)
         self.chart?.setColor(self.chartColor)
+        self.chart?.autoresizingMask = [.width, .height]
         container.addSubview(self.chart!)
-        
+
         view.addSubview(separator)
         view.addSubview(container)
-        
+
+        // The usage graph is what soaks up the leftover height when this column comes up short —
+        // a taller graph is a better use of the space than a gap.
+        self.setStretchable(view) { [weak self, weak view] extra in
+            guard let self else { return }
+            height.constant = self.chartHeight + extra
+            view?.setFrameSize(NSSize(width: Constants.Popup.width, height: self.chartHeight + extra))
+        }
+
         return view
     }
     
     private func initDetails() -> NSView  {
-        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: self.detailsHeight))
-        let separator = separatorView(localizedString("Details"), origin: NSPoint(x: 0, y: self.detailsHeight-Constants.Popup.separatorHeight), width: self.frame.width)
+        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: self.detailsHeight))
+        view.heightAnchor.constraint(equalToConstant: view.bounds.height).isActive = true
+        let separator = separatorView(localizedString("Details"), origin: NSPoint(x: 0, y: self.detailsHeight-Constants.Popup.separatorHeight), width: Constants.Popup.width)
         let container: NSStackView = NSStackView(frame: NSRect(x: 0, y: 0, width: view.frame.width, height: separator.frame.origin.y))
         container.orientation = .vertical
         container.spacing = 0
@@ -223,20 +239,26 @@ internal class Popup: PopupWrapper {
     }
     
     private func initProcesses() -> NSView  {
-        if self.numberOfProcesses == 0 { return NSView() }
-        
-        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: self.frame.width, height: self.processesHeight))
-        let separator = separatorView(localizedString("Top processes"), origin: NSPoint(x: 0, y: self.processesHeight-Constants.Popup.separatorHeight), width: self.frame.width)
+        if self.numberOfProcesses == 0 {
+            let v = NSView()
+            self.processesView = v
+            return v
+        }
+
+        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: self.processesHeight))
+        view.heightAnchor.constraint(equalToConstant: view.bounds.height).isActive = true
+        let separator = separatorView(localizedString("Top processes"), origin: NSPoint(x: 0, y: self.processesHeight-Constants.Popup.separatorHeight), width: Constants.Popup.width)
         let container: ProcessesView = ProcessesView(
-            frame: NSRect(x: 0, y: 0, width: self.frame.width, height: separator.frame.origin.y),
+            frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: separator.frame.origin.y),
             values: [(localizedString("Usage"), nil)],
             n: self.numberOfProcesses
         )
         self.processes = container
-        
+
         view.addSubview(separator)
         view.addSubview(container)
-        
+
+        self.processesView = view
         return view
     }
     
