@@ -905,6 +905,16 @@ internal class ConnectivityReader: Reader<Network_Connectivity> {
     }
     
     override func setup() {
+        // Only ping while somebody is looking. This reader is the sole source of ICMP traffic in
+        // the app: at the default 2s interval it sends an echo to Network_ICMPHost around the
+        // clock (~43k packets/day), which on a laptop keeps the Wi-Fi radio from settling. Its
+        // consumers are the Network popup, the connectivity Dot widget and the connectivity
+        // notification — none of which are used in this fork — so gate it on popup visibility the
+        // same way ProcessReader above already is.
+        //
+        // Trade-off: the Dot widget and the connectivity notification stop updating while the
+        // popup is closed. Drop this line to get the always-on behaviour back.
+        self.popup = true
         self.setInterval(Store.shared.int(key: "Network_updateICMPInterval", defaultValue: 1))
         self.prepare()
     }
