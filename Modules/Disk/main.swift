@@ -235,6 +235,7 @@ public class Disk: Module {
     private var capacityReader: CapacityReader?
     private var activityReader: ActivityReader?
     private var processReader: ProcessReader?
+    private var smartReader: SMARTReader?
     
     private var selectedDisk: String = ""
     
@@ -276,6 +277,11 @@ public class Disk: Module {
                 self?.popupView.processCallback(list)
             }
         }
+        self.smartReader = SMARTReader(.disk) { [weak self] value in
+            if let value {
+                self?.SMARTCallback(value)
+            }
+        }
         
         self.selectedDisk = Store.shared.string(key: "\(ModuleType.disk.stringValue)_disk", defaultValue: self.selectedDisk)
         
@@ -285,16 +291,20 @@ public class Disk: Module {
         }
         self.settingsView.callback = { [weak self] in
             self?.capacityReader?.requestRead()
+            self?.smartReader?.requestRead()
         }
         self.settingsView.setInterval = { [weak self] value in
             self?.capacityReader?.setInterval(value)
+        }
+        self.settingsView.setSMARTInterval = { [weak self] value in
+            self?.smartReader?.setInterval(value)
         }
         self.settingsView.callbackWhenUpdateNumberOfProcesses = { [weak self] in
             self?.popupView.numberOfProcessesUpdated()
             self?.processReader?.requestRead()
         }
         
-        self.setReaders([self.capacityReader, self.activityReader, self.processReader])
+        self.setReaders([self.capacityReader, self.activityReader, self.processReader, self.smartReader])
     }
     
     private func capacityCallback(_ value: Disks) {
@@ -402,5 +412,14 @@ public class Disk: Module {
             default: break
             }
         }
+    }
+    
+    private func SMARTCallback(_ value: Disks) {
+        guard self.enabled else { return }
+        
+        DispatchQueue.main.async(execute: {
+            self.popupView.smartCallback(value)
+        })
+        self.previewView.smartCallback(value)
     }
 }

@@ -47,6 +47,7 @@ internal class Popup: PopupWrapper {
 
     private let settingsSection = PreferencesSection(title: localizedString("Drives"))
     private var lastList: [String] = []
+    private var smartValues: [String: smart_t] = [:]
     
     public init(_ module: ModuleType) {
         super.init(module, frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: 0))
@@ -151,11 +152,15 @@ internal class Popup: PopupWrapper {
             if let view = self.disks.subviews.filter({ $0 is DiskView }).map({ $0 as! DiskView }).first(where: { $0.uuid == drive.uuid }) {
                 view.update(drive)
             } else {
-                self.disks.addArrangedSubview(DiskView(
+                let view = DiskView(
                     width: Constants.Popup.width,
                     drive: drive,
                     resize: self.layoutColumns
-                ))
+                )
+                self.disks.addArrangedSubview(view)
+                if let smart = self.smartValues[drive.uuid] {
+                    view.updateSMART(smart)
+                }
             }
         }
     }
@@ -165,6 +170,21 @@ internal class Popup: PopupWrapper {
         value.reversed().forEach { (drive: drive) in
             if let view = views.first(where: { $0.name == drive.mediaName }) {
                 view.updateStats(stats: drive.activity)
+            }
+        }
+    }
+    
+    internal func smartCallback(_ value: Disks) {
+        value.forEach { (drive: drive) in
+            if let smart = drive.smart {
+                self.smartValues[drive.uuid] = smart
+            }
+        }
+        
+        let views = self.disks.subviews.filter{ $0 is DiskView }.map{ $0 as! DiskView }
+        views.forEach { (v: DiskView) in
+            if let smart = self.smartValues[v.uuid] {
+                v.updateSMART(smart)
             }
         }
     }
@@ -374,7 +394,10 @@ internal class DiskView: NSStackView {
             self.barView.setValue(ColorValue(Double(self.size - value.free) / Double(self.size), color: self.mainColor))
         }
         self.detailsView.update(details: value)
-        self.smartView.update(smart: value.smart)
+    }
+    
+    public func updateSMART(_ smart: smart_t?) {
+        self.smartView.update(smart: smart)
     }
     
     public func appear() {
