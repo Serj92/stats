@@ -1396,7 +1396,9 @@ public class SMCHelper {
 }
 
 internal func grayscaleImage(_ image: NSImage) -> NSImage? {
-    guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+    let scale = NSScreen.main?.backingScaleFactor ?? 2
+    let hints: [NSImageRep.HintKey: Any] = [.ctm: AffineTransform(scale: scale)]
+    guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: hints) else {
         return nil
     }
     let bitmap = NSBitmapImageRep(cgImage: cgImage)
@@ -1404,6 +1406,7 @@ internal func grayscaleImage(_ image: NSImage) -> NSImage? {
     guard let grayscale = bitmap.converting(to: .genericGray, renderingIntent: .default) else {
         return nil
     }
+    grayscale.size = image.size
     let greyImage = NSImage(size: image.size)
     greyImage.addRepresentation(grayscale)
     
