@@ -31,12 +31,12 @@ var modules: [Module] = [
     Sensors(),
     Network(),
     Battery(),
-    // Bluetooth() is deliberately not instantiated: the module is unused in this fork and its
-    // DevicesReader creates a live CBCentralManager (an XPC connection to bluetoothd) inside its
-    // initializer, which Module.init builds regardless of the module's enabled state. Leaving it
-    // out of the registry drops that connection plus the module's popup, settings, preview and
-    // widget views, all of which are constructed eagerly at launch. The module's code still
-    // compiles; re-add this line to bring it back.
+    // Bluetooth() is deliberately not instantiated: the module is unused in this fork, and
+    // Module.init builds a module's popup, settings, preview and widget views regardless of its
+    // enabled state, so registering it costs that whole tree for the process lifetime. Upstream
+    // v3.0.14 (#3572) moved DevicesReader's CBCentralManager out of the initializer into start(),
+    // so the live XPC connection to bluetoothd that originally motivated this is gone; only the
+    // eager UI remains. The module's code still compiles; re-add this line to bring it back.
     Clock(),
     Remote()
 ]
