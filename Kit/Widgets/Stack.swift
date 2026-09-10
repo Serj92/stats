@@ -246,7 +246,7 @@ public class StackWidget: WidgetWrapper {
             if tableNeedsToBeUpdated {
                 self.orderTableView.update()
             }
-            self.display()
+            self.needsDisplay = true
         })
     }
     

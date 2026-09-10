@@ -150,7 +150,6 @@ public class MemoryWidget: WidgetWrapper {
             return true
         }
         guard updated else { return }
-
         DispatchQueue.main.async(execute: {
             self.needsDisplay = true
         })
