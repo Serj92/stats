@@ -13,6 +13,15 @@
 import Cocoa
 import QuartzCore
 
+private func sanitized(_ values: [ColorValue]) -> [ColorValue] {
+    values.map { v in
+        guard !v.value.isFinite else { return v }
+        var clean = ColorValue(0, color: v.color)
+        clean.ts = v.ts
+        return clean
+    }
+}
+
 internal func scaleValue(scale: Scale = .linear, value: Double, maxValue: Double, zeroValue: Double, maxHeight: CGFloat, limit: Double) -> CGFloat {
     var value = value
     if scale == .none && value > 1 && maxValue != 0 {
@@ -237,7 +246,7 @@ public class LineChartView: ChartView {
         zeroValue: Double = 0.01,
         animation: Bool = true
     ) {
-        self.points = Array(repeating: nil, count: max(num, 1))
+        self.points = Array(repeating: nil, count: max(num, 2))
         self.suffix = suffix
         self.color = color
         self.scale = scale
@@ -560,6 +569,12 @@ public class LineChartView: ChartView {
     }
     
     public func addValue(_ value: DoubleValue) {
+        var value = value
+        if !value.value.isFinite {
+            let ts = value.ts
+            value = DoubleValue(0)
+            value.ts = ts
+        }
         self.write {
             let n = self.points.count
             guard n > 0 else { return }
@@ -641,6 +656,7 @@ public class LineChartView: ChartView {
     }
     
     public func reinit(_ num: Int = 60) {
+        let num = max(num, 2)
         self.write {
             guard self.points.count != num else { return }
             let ordered = self.orderedPointsLocked()
@@ -1352,7 +1368,7 @@ public class ColumnChartView: ChartView {
     }
     
     public func setValues(_ values: [ColorValue]) {
-        self.write { self.values = values }
+        self.write { self.values = sanitized(values) }
         self.fadeOrDisplay()
     }
     
@@ -1575,7 +1591,7 @@ public class BarChartView: ChartView {
     }
     
     public func setValues(_ values: [ColorValue]) {
-        self.write { self.values = values }
+        self.write { self.values = sanitized(values) }
         self.fadeOrDisplay()
     }
 }
