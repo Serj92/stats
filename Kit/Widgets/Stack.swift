@@ -35,6 +35,7 @@ public class StackWidget: WidgetWrapper {
     private var alignmentState: String = "left"
     
     private var values: [Stack_t] = []
+    private let textCache = WidgetTextCache(limit: 256)
     
     private var oneRowWidth: CGFloat = 45
     private var twoRowWidth: CGFloat = 32
@@ -161,62 +162,57 @@ public class StackWidget: WidgetWrapper {
     }
     
     private func drawOneRow(_ x: CGFloat, _ element: Stack_t, monospaced: Bool, fixedSize: Bool, alignment: NSTextAlignment) -> CGFloat {
-        var font: NSFont = NSFont.systemFont(ofSize: 13, weight: .regular)
-        if monospaced {
-            font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular)
+        let entry = self.textCache.entry(element.value, key: "one|\(monospaced)|\(alignment.rawValue)") {
+            let font: NSFont = monospaced
+                ? NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular)
+                : NSFont.systemFont(ofSize: 13, weight: .regular)
+            let style = NSMutableParagraphStyle()
+            style.alignment = alignment
+            return [
+                NSAttributedString.Key.font: font,
+                NSAttributedString.Key.foregroundColor: NSColor.textColor,
+                NSAttributedString.Key.paragraphStyle: style
+            ]
         }
-
-        let style = NSMutableParagraphStyle()
-        style.alignment = alignment
-
+        
         var width: CGFloat = self.oneRowWidth
         if !fixedSize {
-            width = element.value.widthOfString(usingFont: font).rounded(.up) + 2
+            width = entry.width.rounded(.up) + 2
         }
         
         let rect = CGRect(x: x, y: (Constants.Widget.height-13)/2, width: width, height: 13)
-        let str = NSAttributedString.init(string: element.value, attributes: [
-            NSAttributedString.Key.font: font,
-            NSAttributedString.Key.foregroundColor: NSColor.textColor,
-            NSAttributedString.Key.paragraphStyle: style
-        ])
-        str.draw(with: rect)
+        entry.string.draw(with: rect)
         
         return width
     }
     
     private func drawTwoRows(_ x: CGFloat, _ topElement: Stack_t, _ bottomElement: Stack_t?, monospaced: Bool, fixedSize: Bool, alignment: NSTextAlignment) -> CGFloat {
         let rowHeight: CGFloat = self.frame.height / 2
-        var font: NSFont
-        if monospaced {
-            font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .light)
-        } else {
-            font = NSFont.systemFont(ofSize: 10, weight: .light)
+        let key = "two|\(monospaced)|\(alignment.rawValue)"
+        let attributes: () -> [NSAttributedString.Key: Any] = {
+            let font: NSFont = monospaced
+                ? NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .light)
+                : NSFont.systemFont(ofSize: 10, weight: .light)
+            let style = NSMutableParagraphStyle()
+            style.alignment = alignment
+            return [
+                NSAttributedString.Key.font: font,
+                NSAttributedString.Key.foregroundColor: NSColor.textColor,
+                NSAttributedString.Key.paragraphStyle: style
+            ]
         }
-        let style = NSMutableParagraphStyle()
-        style.alignment = alignment
-
-        let attributes = [
-            NSAttributedString.Key.font: font,
-            NSAttributedString.Key.foregroundColor: NSColor.textColor,
-            NSAttributedString.Key.paragraphStyle: style
-        ]
-
+        
+        let top = self.textCache.entry(topElement.value, key: key, attributes: attributes)
+        let bottom = bottomElement.map { self.textCache.entry($0.value, key: key, attributes: attributes) }
+        
         var width: CGFloat = self.twoRowWidth
         if !fixedSize {
-            let firstRowWidth = topElement.value.widthOfString(usingFont: font)
-            let secondRowWidth = bottomElement?.value.widthOfString(usingFont: font) ?? 0
-            width = max(20, max(firstRowWidth, secondRowWidth)).rounded(.up) + 2
+            width = max(20, max(top.width, bottom?.width ?? 0)).rounded(.up) + 2
         }
         
-        var rect = CGRect(x: x, y: rowHeight+1, width: width, height: rowHeight)
-        var str = NSAttributedString.init(string: topElement.value, attributes: attributes)
-        str.draw(with: rect)
-        
-        if bottomElement != nil {
-            rect = CGRect(x: x, y: 1, width: width, height: rowHeight)
-            str = NSAttributedString.init(string: bottomElement!.value, attributes: attributes)
-            str.draw(with: rect)
+        top.string.draw(with: CGRect(x: x, y: rowHeight+1, width: width, height: rowHeight))
+        if let bottom {
+            bottom.string.draw(with: CGRect(x: x, y: 1, width: width, height: rowHeight))
         }
         
         return width
