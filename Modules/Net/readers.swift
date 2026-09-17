@@ -220,7 +220,6 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate {
         self.reachability.unreachable = { [weak self] in
             guard let self else { return }
             if self.active {
-                self.getWiFiDetails()
                 self.usage.reset()
                 self.callback(self.usage)
             }
@@ -489,6 +488,8 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate {
     }
     
     private func getWiFiDetails() {
+        guard self.usage.connectionType == .wifi else { return }
+        
         if let interface = CWWiFiClient.shared().interface(withName: self.interfaceID) {
             if let ssid = interface.ssid() {
                 self.usage.wifiDetails.ssid = ssid
@@ -551,15 +552,15 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate {
     
     private func getLocalIP(_ pointer: UnsafeMutablePointer<ifaddrs>) -> (family: UInt8, value: String)? {
         guard let ifaAddr = pointer.pointee.ifa_addr else { return nil }
-        var addr = ifaAddr.pointee
-        guard addr.sa_family == UInt8(AF_INET) || addr.sa_family == UInt8(AF_INET6) else { return nil }
-
+        let family = ifaAddr.pointee.sa_family
+        guard family == UInt8(AF_INET) || family == UInt8(AF_INET6) else { return nil }
+        
         var ip = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-        getnameinfo(&addr, socklen_t(addr.sa_len), &ip, socklen_t(ip.count), nil, socklen_t(0), NI_NUMERICHOST)
-
+        guard getnameinfo(ifaAddr, socklen_t(ifaAddr.pointee.sa_len), &ip, socklen_t(ip.count), nil, socklen_t(0), NI_NUMERICHOST) == 0 else { return nil }
+        
         let ipStr = String(cString: ip)
         guard !ipStr.isEmpty else { return nil }
-        return (family: addr.sa_family, value: ipStr)
+        return (family: family, value: ipStr)
     }
     
     private func getPublicIP() {
