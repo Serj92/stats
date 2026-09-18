@@ -266,13 +266,13 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate {
             self.lastDetailsReadTS = .distantPast
         }
         
-        self.requestDetails()
-        
+        self.requestDetails(interfaceID)
+
         let current: Bandwidth
         if self.reader == "interface" {
-            current = self.readInterfaceBandwidth()
+            current = self.readInterfaceBandwidth(interfaceID)
         } else {
-            self.readInterfaceStatus()
+            self.readInterfaceStatus(interfaceID)
             current = self.readProcessBandwidth()
         }
         
@@ -314,49 +314,54 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate {
         self.usage.bandwidth.download = current.download
     }
     
-    private func readInterfaceBandwidth() -> Bandwidth {
+    // interfaceID is resolved once per tick by read() and passed down: the getter can hit configd
+    // (SCDynamicStore IPC), and the loops below compare it against every ifaddrs entry (~30 here)
+    private func readInterfaceBandwidth(_ interfaceID: String) -> Bandwidth {
         var interfaceAddresses: UnsafeMutablePointer<ifaddrs>? = nil
         guard getifaddrs(&interfaceAddresses) == 0 else {
             return Bandwidth()
         }
+        let wifiRate = self.wifiClient.interface(withName: interfaceID)?.transmitRate()
 
         var pointer = interfaceAddresses
         while pointer != nil {
             defer { pointer = pointer?.pointee.ifa_next }
             guard let pointer = pointer else { break }
 
-            if String(cString: pointer.pointee.ifa_name) != self.interfaceID {
+            if String(cString: pointer.pointee.ifa_name) != interfaceID {
                 continue
             }
-            self.updateInterfaceInfo(pointer)
+            self.updateInterfaceInfo(pointer, wifiRate: wifiRate)
         }
         freeifaddrs(interfaceAddresses)
-        
-        return self.getBytesInfo() ?? Bandwidth()
+
+        return self.getBytesInfo(interfaceID) ?? Bandwidth()
     }
-    
-    private func readInterfaceStatus() {
+
+    private func readInterfaceStatus(_ interfaceID: String) {
         var interfaceAddresses: UnsafeMutablePointer<ifaddrs>? = nil
         guard getifaddrs(&interfaceAddresses) == 0 else { return }
-        
+        let wifiRate = self.wifiClient.interface(withName: interfaceID)?.transmitRate()
+
         var pointer = interfaceAddresses
         while pointer != nil {
             defer { pointer = pointer?.pointee.ifa_next }
             guard let pointer = pointer else { break }
-            
-            if String(cString: pointer.pointee.ifa_name) != self.interfaceID {
+
+            if String(cString: pointer.pointee.ifa_name) != interfaceID {
                 continue
             }
-            self.updateInterfaceInfo(pointer)
+            self.updateInterfaceInfo(pointer, wifiRate: wifiRate)
         }
         freeifaddrs(interfaceAddresses)
     }
-    
-    private func updateInterfaceInfo(_ pointer: UnsafeMutablePointer<ifaddrs>) {
+
+    // wifiRate: the CoreWLAN link rate, looked up once per tick (an XPC to airportd) instead of per entry
+    private func updateInterfaceInfo(_ pointer: UnsafeMutablePointer<ifaddrs>, wifiRate: Double?) {
         self.usage.interface?.status = (pointer.pointee.ifa_flags & UInt32(IFF_UP)) != 0
-        
-        if let wifiInterface = CWWiFiClient.shared().interface(withName: self.interfaceID) {
-            self.usage.interface?.transmitRate = wifiInterface.transmitRate()
+
+        if let wifiRate {
+            self.usage.interface?.transmitRate = wifiRate
         } else if let raw = pointer.pointee.ifa_data {
             let dataPtr = raw.assumingMemoryBound(to: if_data.self)
             let ifData = dataPtr.pointee
@@ -411,8 +416,8 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate {
         return Bandwidth(upload: totalUpload, download: totalDownload)
     }
     
-    private func requestDetails() {
-        guard self.interfaceID != "", !self.detailsInProgress else { return }
+    private func requestDetails(_ interfaceID: String) {
+        guard interfaceID != "", !self.detailsInProgress else { return }
         if Date().timeIntervalSince(self.lastDetailsReadTS) < 15 { return }
         
         self.detailsInProgress = true
@@ -614,8 +619,8 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate {
         return data.isEmpty ? nil : data
     }
     
-    private func getBytesInfo() -> Bandwidth? {
-        let index = if_nametoindex(self.interfaceID)
+    private func getBytesInfo(_ interfaceID: String) -> Bandwidth? {
+        let index = if_nametoindex(interfaceID)
         guard index != 0 else { return nil }
         
         var mib: [Int32] = [CTL_NET, PF_ROUTE, 0, 0, NET_RT_IFLIST2, Int32(index)]
