@@ -57,7 +57,7 @@ public class Portal: PortalWrapper {
             right: Constants.Popup.spacing*4
         )
         
-        self.circle.toolTip = localizedString("GPU usage")
+        self.circle.toolTip = localizedString("GPU utilization")
         view.addArrangedSubview(self.circle)
         
         return view
@@ -72,7 +72,7 @@ public class Portal: PortalWrapper {
         self.usageField = portalRow(view, title: "\(localizedString("Usage")):").1
         self.renderField = portalRow(view, title: "\(localizedString("Render")):").1
         self.tilerField = portalRow(view, title: "\(localizedString("Tiler")):").1
-        self.aneField = portalRow(view, title: "\(localizedString("ANE")):").1
+        self.aneField = portalRow(view, title: "\("ANE"):").1
         
         return view
     }
@@ -93,7 +93,7 @@ public class Portal: PortalWrapper {
                     self.aneField?.stringValue = "\(Int(value*100))%"
                 }
                 
-                self.circle.toolTip = "\(localizedString("GPU usage")): \(Int(value.utilization!*100))%"
+                self.circle.toolTip = "\(localizedString("GPU utilization")): \(Int(value.utilization!*100))%"
                 self.circle.setValue(value.utilization!)
                 self.circle.setText("\(Int(value.utilization!*100))%")
                 self.initialized = true

@@ -861,7 +861,7 @@ internal class SmartView: NSView {
         constraint.isActive = true
         self.heightConstraint = constraint
 
-        let separator = separatorView(localizedString("SMART"), origin: NSPoint(x: 0, y: h-Constants.Popup.separatorHeight), width: width)
+        let separator = separatorView("SMART", origin: NSPoint(x: 0, y: h-Constants.Popup.separatorHeight), width: width)
         let container: NSStackView = NSStackView(frame: NSRect(x: 0, y: 0, width: width, height: separator.frame.origin.y))
         container.orientation = .vertical
         container.spacing = 0
