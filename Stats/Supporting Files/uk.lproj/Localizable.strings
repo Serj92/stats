@@ -33,7 +33,7 @@
 "Unknown" = "Невідомо";
 "Version" = "Версія";
 "Processor" = "Процесор";
-"Memory" = "Память";
+"Memory" = "Пам'ять";
 "Graphics" = "Графіка";
 "Close" = "Закрити";
 "Download" = "Завантажити";
@@ -47,11 +47,11 @@
 "None" = "Ніяка";
 "Dots" = "Пункти";
 "Arrows" = "Стрілки";
-"Characters" = "Літери";
+"Characters" = "Знаки";
 "Short" = "Короткий";
 "Long" = "Довгий";
-"Max" = "Мін.";
-"Min" = "Макс.";
+"Max" = "Макс.";
+"Min" = "Мін.";
 "Reset" = "Скинути";
 "Alignment" = "Вирівнювання";
 "Left alignment" = "Ліворуч";
@@ -75,7 +75,7 @@
 "Format" = "Формат";
 "Turn off" = "Вимкнути";
 "Normal" = "Нормальний";
-"Warning" = "Попереджнння";
+"Warning" = "Попередження";
 "Critical" = "Критичний";
 "Usage" = "Використання";
 "2 minutes" = "2 хвилини";
@@ -144,14 +144,14 @@
 "Close module settings" = "Закрити налаштування модуля"; // qwen3.8:27b
 
 // Application settings
-"Check for updates" = "Перевіряти оновленя";
+"Check for updates" = "Перевіряти оновлення";
 "At start" = "При включенні";
 "Once per day" = "Раз на день";
 "Once per week" = "Раз на тиждень";
 "Once per month" = "Раз на місяць";
 "Never" = "Ніколи";
-"Check for update" = "Перевірити оновленя";
-"Show icon in dock" = "Показувати іконку в dock";
+"Check for update" = "Перевірити оновлення";
+"Show icon in dock" = "Показувати іконку в Dock";
 "Start at login" = "Запускати при логуванні";
 "Build number" = "Номер збірки";
 "Import settings" = "Імпорт налаштувань";
@@ -192,7 +192,7 @@
 // Widgets
 "Color" = "Колір";
 "Label" = "Етикетка";
-"Box" = "Коробка"; // translategemma:4b
+"Box" = "Тло";
 "Frame" = "Рамка";
 "Split download/upload" = "Розділити завантаження/висилання";
 "Split read/write" = "Розділити читання/запис";
@@ -225,7 +225,7 @@
 "Color of upload" = "Колір висилання";
 "Monospaced font" = "Моноширинний шрифт";
 "Reverse order" = "Зворотній порядок";
-"Chart history" = "Тривалість діаграми";
+"Chart history" = "Історія діаграми";
 "Default color" = "За замовчуванням";
 "Transparent when no activity" = "Прозорий коли немає активності";
 "Constant color" = "Постійний";
@@ -240,9 +240,9 @@
 "Pictogram" = "Піктограма";
 "Module" = "Модуль";
 "Widgets" = "Віджети";
-"Popup" = "Спливаюче віконо";
-"Notifications" = "Cповіщення";
-"Merge widgets" = "Об’єднайти віджети";
+"Popup" = "Спливаюче вікно";
+"Notifications" = "Сповіщення";
+"Merge widgets" = "Об’єднати віджети";
 "No available widgets to configure" = "Немає доступних віджетів для налаштування";
 "No options to configure for the popup in this module" = "У цьому модулі немає параметрів для налаштування спливаючого вікна";
 "Process" = "Процес";
@@ -308,12 +308,10 @@
 "Model" = "Модель";
 "Status" = "Статус";
 "Utilization" = "Використання";
-"Render" = "Рендер"; // qwen3.8:27b
-"Render utilization" = "Використання render";
-"Render utilization history" = "Історія завантаження рендеру"; // qwen3.8:27b
-"Tiler" = "Плитка"; // qwen3.8:27b
-"Tiler utilization" = "Використання tiler";
-"Tiler utilization history" = "Історія використання Tiler"; // qwen3.8:27b
+"Renderer utilization" = "Використання рендерера";
+"Renderer utilization history" = "Історія використання рендерера"; // qwen3.8:27b
+"Tiler utilization" = "Використання тайлера";
+"Tiler utilization history" = "Історія використання тайлера"; // qwen3.8:27b
 "GPU usage threshold" = "Поріг використання графічного процесора";
 "GPU usage is" = "Використання графічного процесора %0";
 "ANE utilization" = "Використання ANE"; // qwen3.8:27b
@@ -371,11 +369,11 @@
 "Power cycles" = "Кількість циклів";
 "Power on hours" = "Години роботи";
 "Critical warning" = "Критичне попередження";
-"Available spare" = "Доступний простір";
+"Available spare" = "Доступний резерв";
 "Unsafe shutdowns" = "Небезпечні вимкнення";
 "Media errors" = "Помилки медіа";
 "Threshold" = "Поріг";
-"Spare below threshold" = "Запасний елемент нижче порогу";
+"Spare below threshold" = "Резерв нижче порогу";
 "Temperature out of range" = "Температура поза межами допустимого діапазону";
 "Reliability degraded" = "Зниження надійності";
 "Read-only mode" = "Режим лише для читання";
@@ -459,7 +457,6 @@
 "Internet connection established" = "З’єднання з інтернетом відновлено";
 "Show country code instead of emoji" = "Показувати код країни замість емодзі";
 "DNS Server" = "Сервер DNS"; // qwen3.8:27b
-"Jitter" = "Джитер"; // qwen3.8:27b
 "Noise" = "Шум"; // qwen3.8:27b
 "Signal" = "Сигнал"; // qwen3.8:27b
 "Speed" = "Швидкість"; // qwen3.8:27b
@@ -469,7 +466,7 @@
 
 // Battery
 "Source" = "Джерело";
-"AC Power" = "Мережа";
+"AC Power" = "Мережне живлення";
 "Battery Power" = "Акумулятор";
 "Time" = "Час";
 "Health" = "Стан акумулятора";
@@ -494,7 +491,7 @@
 "Time and percentage" = "Час і проценти";
 "Time format" = "Формат часу";
 "Hide additional information when full" = "Приховати додаткову інформацію, якщо акумулятор заряджений";
-"Percentage inside the icon" = "Відсоток всередині віджету";
+"Percentage inside the icon" = "Відсоток всередині іконки";
 "Charger state inside the battery" = "Стан зарядки всередині акумулятора";
 "Max capacity" = "Максимальна ємність"; // qwen3.8:27b
 "Designed capacity" = "Проектна ємність"; // qwen3.8:27b
@@ -537,7 +534,7 @@
 "Red" = "Червоний";
 "Second red" = "Інший червоний";
 "Green" = "Зелений";
-"Second green" = "Червоний зелений";
+"Second green" = "Інший зелений";
 "Blue" = "Блакитний";
 "Second blue" = "Інший блакитний";
 "Yellow" = "Жовтий";
@@ -551,7 +548,7 @@
 "Cyan" = "Циан";
 "Magenta" = "Пурпуровий";
 "Pink" = "Рожевий";
-"Teal" = "Чиряковий";
+"Teal" = "Бірюзовий";
 "Indigo" = "Індіго";
 
 // System Stats
