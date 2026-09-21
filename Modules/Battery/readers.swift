@@ -79,7 +79,7 @@ internal class UsageReader: Reader<Battery_Usage> {
                 isBatteryPowered: state == "UPS Power",
                 isCharged: ups[kIOPSIsChargedKey] as? Bool ?? false,
                 isCharging: ups[kIOPSIsChargingKey] as? Bool ?? false,
-                level: Double(ups[kIOPSCurrentCapacityKey] as? Int ?? 0) / 100,
+                level: Double(ups[kIOPSCurrentCapacityKey] as? Int ?? 0) / 100
             )
         }
         
