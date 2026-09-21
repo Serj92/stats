@@ -39,7 +39,16 @@ git commit -m "feat: краткое описание"
 
 Никуда переносить коммит не надо, `local/build` — конечная. Порядок коммитов на ветке значения не имеет: правки под старый Xcode лежат отдельными коммитами там, где их сделали, и «последним» ничего быть не обязано (см. [XCODE-COMPAT.md](XCODE-COMPAT.md)).
 
-Новые строки интерфейса — сразу EN + RU + UK в `*.lproj/Localizable.strings`. Проверка: `python3 Kit/scripts/i18n.py` (без аргументов — `check`), добор пропусков — `python3 Kit/scripts/i18n.py fix`.
+Новые строки интерфейса — сразу EN + RU + UK в `*.lproj/Localizable.strings`. Остальные языки их не получают сознательно: там строка откатывается на английский ключ, а 38 файлов, которые апстрим правит каждый релиз, не обрастают нашими строками.
+
+Проверка: `python3 Kit/scripts/i18n.py` (без аргументов — `check`). С v3.0.17 скрипт сверяет наборы ключей, а не строки по номерам, поэтому **падает всегда**: наши ключи есть только в en/ru/uk, это 11 × 38 = 418 ошибок `missing key` (цифра растёт с каждым новым ключом). Смотреть на всё остальное — прежде всего `duplicate key`. Отфильтровать наш шум:
+
+```bash
+python3 Kit/scripts/i18n.py 2>&1 | grep -E 'duplicate key|missing key' | grep -vFf <(grep -oE '^"[^"]+"' "Stats/Supporting Files/en.lproj/Localizable.strings" | sort | comm -13 <(git show upstream/master:"Stats/Supporting Files/en.lproj/Localizable.strings" | grep -oE '^"[^"]+"' | sort) - | sed 's/^/missing key /')
+# пусто (exit 1) — всё чисто
+```
+
+`i18n.py fix` не запускать: он вписывает английские значения недостающих ключей во все 38 языков.
 
 ## Синхронизация с upstream
 
