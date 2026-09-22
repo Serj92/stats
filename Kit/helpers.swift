@@ -16,6 +16,8 @@ import UserNotifications
 import WebKit
 import Metal
 
+public let machHostPort: mach_port_t = mach_host_self()
+
 public struct LaunchAtLogin {
     private static let id = "\(Bundle.main.bundleIdentifier!).LaunchAtLogin"
     

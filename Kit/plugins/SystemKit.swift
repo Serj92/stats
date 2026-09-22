@@ -349,7 +349,7 @@ public class SystemKit {
         }
         
         let result = hostInfo.withMemoryRebound(to: integer_t.self, capacity: Int(size)) {
-            host_info(mach_host_self(), HOST_BASIC_INFO, $0, &size)
+            host_info(machHostPort, HOST_BASIC_INFO, $0, &size)
         }
         
         if result != KERN_SUCCESS {
@@ -393,9 +393,11 @@ public class SystemKit {
         
         while service != 0 {
             service = IOIteratorNext(iterator)
+            guard service != 0 else { break }
             
             var entry: io_iterator_t = io_iterator_t()
             if IORegistryEntryGetChildIterator(service, kIOServicePlane, &entry) != kIOReturnSuccess {
+                IOObjectRelease(service)
                 continue
             }
             var child: io_registry_entry_t = 1
