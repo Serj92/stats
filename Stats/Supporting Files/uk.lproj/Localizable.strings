@@ -463,6 +463,9 @@
 "Network interface changed" = "Мережевий інтерфейс змінено"; // qwen3.8:27b
 "WiFi network changed" = "Мережа Wi-Fi змінилася"; // qwen3.8:27b
 "This will be visible in the text widget" = "Це буде видно у текстовому віджеті"; // qwen3.8:27b
+"Allow access to Wi-Fi details" = "Дозвольте доступ до даних Wi-Fi";
+"Wi-Fi location permission description" = "macOS показує назву мережі Wi-Fi і BSSID лише застосункам із доступом до служб локації. Щоб Stats їх бачив, увімкніть його в розділі «Приватність і безпека» → «Служби локації».";
+"Open Location Settings" = "Відкрити параметри локації";
 
 // Battery
 "Source" = "Джерело";

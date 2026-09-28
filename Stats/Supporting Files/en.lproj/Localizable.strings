@@ -463,6 +463,9 @@
 "Network interface changed" = "Network interface changed";
 "WiFi network changed" = "WiFi network changed";
 "This will be visible in the text widget" = "This will be visible in the text widget";
+"Allow access to Wi-Fi details" = "Allow access to Wi-Fi details";
+"Wi-Fi location permission description" = "macOS shows the Wi-Fi network name and BSSID only to apps with Location Services access. To let Stats see them, turn it on in Privacy & Security → Location Services.";
+"Open Location Settings" = "Open Location Settings";
 
 // Battery
 "Source" = "Source";
