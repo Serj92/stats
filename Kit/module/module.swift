@@ -104,6 +104,7 @@ open class Module {
     private var readers: [Reader_p] = []
     private var popupVisible = false
     private var settingsVisible = false
+    private var readersAsleep = false
     
     private var pauseState: Bool {
         get { Store.shared.bool(key: "pause", defaultValue: false) }
@@ -191,9 +192,17 @@ open class Module {
     // Pause/resume readers without changing the enabled state — used to stop polling
     // while nothing is visible (display asleep / screen locked). No-op for disabled
     // modules so their stopped readers are never accidentally started on resume.
+    // Deliberately not Reader.sleepMode: upstream's `sleep` flag means "read only while
+    // a view is open" and skips the pause for readers whose popup or settings is visible.
     public func setReadersSleep(_ state: Bool) {
+        guard state != self.readersAsleep else { return }
+        self.readersAsleep = state
         guard self.enabled else { return }
-        self.readers.forEach { $0.sleepMode(state: state) }
+        if state {
+            self.readers.forEach { $0.pause() }
+        } else {
+            self.startReaders()
+        }
     }
     
     // terminate function which call before app termination
