@@ -417,7 +417,7 @@
 "Sensor to show" = "Активный датчик";
 
 // Network
-"Allow access to Wi-Fi details" = "Разрешить доступ к деталям Wi-Fi";
+"Allow access to Wi-Fi details" = "Разрешить доступ к Wi-Fi";
 "Open Location Settings" = "Открыть настройки геолокации";
 "Uploading" = "Выгрузка";
 "Downloading" = "Загрузка";
@@ -465,8 +465,6 @@
 "Network interface changed" = "Сетевой интерфейс изменён"; // qwen3.8:27b
 "WiFi network changed" = "Сеть Wi-Fi изменена"; // qwen3.8:27b
 "This will be visible in the text widget" = "Это будет видно в текстовом виджете"; // qwen3.8:27b
-"Allow access to Wi-Fi details" = "Разрешить доступ к Wi-Fi";
-"Open Location Settings" = "Открыть настройки геолокации";
 
 // Battery
 "Source" = "Источник";

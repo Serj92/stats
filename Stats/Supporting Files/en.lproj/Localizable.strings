@@ -465,8 +465,6 @@
 "Network interface changed" = "Network interface changed";
 "WiFi network changed" = "WiFi network changed";
 "This will be visible in the text widget" = "This will be visible in the text widget";
-"Allow access to Wi-Fi details" = "Allow access to Wi-Fi details";
-"Open Location Settings" = "Open Location Settings";
 
 // Battery
 "Source" = "Source";

@@ -417,8 +417,8 @@
 "Sensor to show" = "Активний датчик";
 
 // Network
-"Allow access to Wi-Fi details" = "Дозволити доступ до деталей Wi-Fi";
-"Open Location Settings" = "Відкрити налаштування геолокації";
+"Allow access to Wi-Fi details" = "Дозволити доступ до Wi-Fi";
+"Open Location Settings" = "Відкрити параметри локації";
 "Uploading" = "Висилання";
 "Downloading" = "Завантаження";
 "Public IP" = "Публічний IP";
@@ -465,8 +465,6 @@
 "Network interface changed" = "Мережевий інтерфейс змінено"; // qwen3.8:27b
 "WiFi network changed" = "Мережа Wi-Fi змінилася"; // qwen3.8:27b
 "This will be visible in the text widget" = "Це буде видно у текстовому віджеті"; // qwen3.8:27b
-"Allow access to Wi-Fi details" = "Дозволити доступ до Wi-Fi";
-"Open Location Settings" = "Відкрити параметри локації";
 
 // Battery
 "Source" = "Джерело";
