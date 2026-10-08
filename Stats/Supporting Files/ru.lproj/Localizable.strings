@@ -231,6 +231,7 @@
 "Transparent when no activity" = "Прозрачный когда нет активности";
 "Constant color" = "Постоянный";
 "Custom..." = "Пользовательский...";
+"Icon widget" = "Значок";
 
 // Module Kit
 "Open module settings" = "Открыть настройки модуля";
