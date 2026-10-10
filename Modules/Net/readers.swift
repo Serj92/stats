@@ -387,16 +387,26 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate, CLLocationMa
 
     // wifiRate: the CoreWLAN link rate, looked up once per tick (an XPC to airportd) instead of per entry
     private func updateInterfaceInfo(_ pointer: UnsafeMutablePointer<ifaddrs>, wifiRate: Double?) {
-        self.usage.interface?.status = (pointer.pointee.ifa_flags & UInt32(IFF_UP)) != 0
+        let interfaceID = String(cString: pointer.pointee.ifa_name)
+        let status = (pointer.pointee.ifa_flags & UInt32(IFF_UP)) != 0
+        var transmitRate: Double? = nil
 
         if let wifiRate {
-            self.usage.interface?.transmitRate = wifiRate
+            transmitRate = wifiRate
         } else if let raw = pointer.pointee.ifa_data {
             let dataPtr = raw.assumingMemoryBound(to: if_data.self)
             let ifData = dataPtr.pointee
             let baud = UInt64(ifData.ifi_baudrate)
             if baud > 0 {
-                self.usage.interface?.transmitRate = Double(baud) / 1_000_000.0
+                transmitRate = Double(baud) / 1_000_000.0
+            }
+        }
+        
+        self.variablesQueue.sync {
+            guard self._usage.interface?.BSDName == interfaceID else { return }
+            self._usage.interface?.status = status
+            if let transmitRate {
+                self._usage.interface?.transmitRate = transmitRate
             }
         }
         
@@ -470,7 +480,13 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate, CLLocationMa
                let type = SCNetworkInterfaceGetInterfaceType(interface as! SCNetworkInterface),
                let displayName = SCNetworkInterfaceGetLocalizedDisplayName(interface as! SCNetworkInterface),
                let address = SCNetworkInterfaceGetHardwareAddressString(interface as! SCNetworkInterface) {
-                self.usage.interface = Network_interface(displayName: displayName as String, BSDName: bsdName as String, address: address as String)
+                self.variablesQueue.sync {
+                    if self._usage.interface?.BSDName != interfaceID {
+                        self._usage.interface = Network_interface(BSDName: interfaceID)
+                    }
+                    self._usage.interface?.displayName = displayName as String
+                    self._usage.interface?.address = address as String
+                }
                 found = true
                 
                 switch type {
