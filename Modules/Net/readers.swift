@@ -873,6 +873,7 @@ public class ProcessReader: Reader<[Network_Process]> {
     
     public override func setup() {
         self.popup = true
+        self.preview = true
     }
     
     public override func read() {
