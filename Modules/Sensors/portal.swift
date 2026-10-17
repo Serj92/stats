@@ -82,6 +82,7 @@ public class Portal: NSStackView, Portal_p {
             let v = ValueSensorView(s, width: width, callback: {})
             v.update(self.formattedValue(s))
             self.container.stackView.addArrangedSubview(v)
+            v.widthAnchor.constraint(equalTo: self.container.stackView.widthAnchor).isActive = true
             self.list[s.key] = v
         }
     }
