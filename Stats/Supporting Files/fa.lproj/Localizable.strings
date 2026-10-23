@@ -230,6 +230,7 @@
 "Constant color" = "ثابت"; // translategemma:4b
 "Custom..." = "سفارشی...";
 "Icon widget" = "ویجت آیکون";
+"Animate icon" = "متحرک‌سازی آیکون";
 
 // Module Kit
 "Open module settings" = "باز کردن تنظیمات ماژول‌ها";
