@@ -81,6 +81,9 @@ open class Reader<T: Codable>: NSObject, ReaderInternal_p {
     
     private var lastDBWrite: Date? = nil
 
+    private let historyQueue = DispatchQueue(label: "eu.exelban.readerHistoryQueue")
+    private var lastHistoryRead: (uptime: TimeInterval, date: Date)? = nil
+    
     private var alignGeneration: UInt = 0
     private let alignQueue = DispatchQueue(label: "eu.exelban.readerAlignQueue")
 
@@ -106,7 +109,7 @@ open class Reader<T: Codable>: NSObject, ReaderInternal_p {
     }
     
     deinit {
-        DB.shared.insert(key: self.moduleKey, value: self.value, ts: self.history)
+        DB.shared.insert(key: self.moduleKey, value: self.value)
     }
     
     public func initStoreValues(title: String) {
@@ -119,13 +122,14 @@ open class Reader<T: Codable>: NSObject, ReaderInternal_p {
         let moduleKey = self.moduleKey
         self.value = value
         if let value {
+            self.recordHistory(value)
             self.callbackHandler(value)
             SystemStats.shared.send(key: moduleKey, value: value)
             if let ts = self.lastDBWrite, let interval = self.interval, Date().timeIntervalSince(ts) > interval * 10 {
-                DB.shared.insert(key: moduleKey, value: value, ts: self.history)
+                DB.shared.insert(key: moduleKey, value: value)
                 self.lastDBWrite = Date()
             } else if self.lastDBWrite == nil {
-                DB.shared.insert(key: moduleKey, value: value, ts: self.history)
+                DB.shared.insert(key: moduleKey, value: value)
                 self.lastDBWrite = Date()
             }
         }
@@ -168,6 +172,26 @@ open class Reader<T: Codable>: NSObject, ReaderInternal_p {
         }
     }
 
+    private func recordHistory(_ value: T) {
+        guard self.history, self.active else { return }
+        
+        self.historyQueue.sync {
+            guard self.active else { return }
+            let now = ProcessInfo.processInfo.systemUptime
+            let date = Date()
+            let interval = self.interval ?? Double(self.defaultInterval)
+            let previous = self.lastHistoryRead
+            self.lastHistoryRead = (now, date)
+            guard let previous else { return }
+            
+            let elapsed = now - previous.uptime
+            guard elapsed > 0, elapsed <= interval * 3 else { return }
+            guard abs(date.timeIntervalSince(previous.date) - elapsed) < max(interval, 1) else { return }
+            
+            DB.shared.recordHistory(key: self.moduleKey, value: value, at: date, duration: elapsed)
+        }
+    }
+    
     open func start() {
         if (self.popup || self.preview || self.sleep) && self.locked {
             DispatchQueue.global(qos: .background).async {
@@ -175,7 +199,8 @@ open class Reader<T: Codable>: NSObject, ReaderInternal_p {
             }
             return
         }
-
+        
+        self.active = true
         self.alignQueue.sync {
             if self.alignToSecondBoundary {
                 if self.repeatTask == nil {
@@ -192,8 +217,6 @@ open class Reader<T: Codable>: NSObject, ReaderInternal_p {
                 self.repeatTask?.start()
             }
         }
-
-        self.active = true
     }
     
     open func pause() {
@@ -202,6 +225,7 @@ open class Reader<T: Codable>: NSObject, ReaderInternal_p {
             self.repeatTask?.pause()
         }
         self.active = false
+        self.historyQueue.sync { self.lastHistoryRead = nil }
     }
     
     open func stop() {
@@ -212,6 +236,7 @@ open class Reader<T: Codable>: NSObject, ReaderInternal_p {
             self.initlizalized = false
         }
         self.active = false
+        self.historyQueue.sync { self.lastHistoryRead = nil }
     }
     
     public func setInterval(_ value: Int) {
@@ -233,7 +258,7 @@ open class Reader<T: Codable>: NSObject, ReaderInternal_p {
     }
     
     public func save(_ value: T) {
-        DB.shared.insert(key: self.moduleKey, value: value, ts: self.history, force: true)
+        DB.shared.insert(key: self.moduleKey, value: value, force: true)
     }
     
     private func delayToNextSecondBoundary() -> TimeInterval {
