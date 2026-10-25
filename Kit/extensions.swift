@@ -156,7 +156,14 @@ public final class ProcessIconCache {
         if let cached = self.cache.object(forKey: key) {
             return cached
         }
-        let icon = NSRunningApplication(processIdentifier: pid_t(pid))?.icon ?? Constants.defaultProcessIcon
+        let source = NSRunningApplication(processIdentifier: pid_t(pid))?.icon ?? Constants.defaultProcessIcon
+        // App icons arrive with a 1024 px representation, and a layer-backed NSImageView rasterizes
+        // that one into its layer (4 MB of CoreAnimation memory per icon) even though rows show it
+        // at 12-18 pt. A drawing-handler image is rasterized at the size it is displayed at.
+        let icon = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { rect in
+            source.draw(in: rect)
+            return true
+        }
         self.cache.setObject(icon, forKey: key)
         return icon
     }
