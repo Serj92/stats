@@ -36,7 +36,7 @@ internal class UsageReader: Reader<RAM_Usage> {
     
     public override func read() {
         var stats = vm_statistics64()
-        var count = UInt32(MemoryLayout<vm_statistics64_data_t>.offset(of: \.swapped_count)! / MemoryLayout<integer_t>.size)
+        var count = UInt32(MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size)
         
         let result: kern_return_t = withUnsafeMutablePointer(to: &stats) {
             $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
