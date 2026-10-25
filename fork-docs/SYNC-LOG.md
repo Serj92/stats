@@ -4,6 +4,59 @@
 
 ---
 
+## 2026-10-25 — v3.0.22 + v3.0.23 (билд 850)
+
+Доклад: вышел v3.0.23, триггер из записи 18.10 сработал; польза для этой машины по-прежнему ~0, но апстрим наслаивает новую фичу (история ридеров) на наши перф-файлы `reader.swift`/`DB.swift` → «синкаем». Дельта `88d5359a..5cf09a8c` — 19 коммитов: 15 взяты, `1282cd52` частично, `13674482` пропущен, `5de11712` уже был (`4adf4209`), бамп `5cf09a8c` — своим коммитом. **Последний взятый апстримный коммит — `5cf09a8c` (v3.0.23)**, дельта до `upstream/master` нулевая. Бэкап: `backup/local-build-pre-v3.0.23`, полный откат — `git reset --hard backup/local-build-pre-v3.0.23`.
+
+| Апстрим | Наш | Что | Как лёг |
+|---|---|---|---|
+| `c9e7ebe3` (#3679) | `62a2ccc9` | Disk I/O внешних APFS через поиск `IOBlockStorageDriver` | **конфликт** — ниже |
+| `4ecf4f73` (#3615) | `546db0d4` | Battery на полном заряде | чисто |
+| `5808bf92` (#3480) | `3bca6435` | топ процессов в превью CPU/RAM/Disk/Net | **конфликт** — ниже. **Регрессия памяти** — ниже |
+| `a2836b69` (#3652) | `b8810a4a` | Sensors в Combined | **конфликт** — ниже |
+| `ea74107c` (#3688) | `32250ea3` | RAM: `count` до `swapped_count` | чисто, но не собирается под Xcode 16.0 → compat `78d85924` |
+| `13d8db6b` | `d4e4808e` | словенский перевод | чисто |
+| `13674482` | — | `install.sh` (Remote) | **пропущен**: modify/delete, в форке файл удалён, после резолва коммит пустой |
+| `1282cd52` | `db5c4341` | бамп v3.0.22 | **частично**: только `LastUpgradeVersion` схем 2700 → 2710 |
+| `57314555` | `bc7bfb2e` | CI | чисто |
+| `bda3a013` (#3685) | `a34f8c8f` | текстовый виджет Battery | чисто |
+| `b796af44` (#3687) | `f4622274` | `StepperInput` с единицами | чисто |
+| `3969ffd7` | `5e05f22d` | `libleveldb.a` пересобрана со Snappy | чисто; линкуется под Xcode 16.0 без предупреждений |
+| `df7056e9` | `1969bceb` | Battery в Remote | чисто |
+| `c7a2caa1` (#3705), `7d3f70dc` | `36ffa29e`, `c292be5c` | анимация Icon-виджета (только Sensors) | чисто |
+| `f1aa0cdf` | `89344a8f` | постоянная история ридеров (поминутно, 24 ч) | **конфликт** — ниже |
+| `ffdf6374` (#3691) | `9dc62c86` | стресс-тест CPU на super-ядрах | чисто |
+| `5cf09a8c` | `8aa5d532` | бамп v3.0.23 | свой: 3.0.23, `CFBundleVersion` 849 → 850 (апстримный 851 не взят) |
+| — | `78d85924` | Xcode 16.0 compat | `count` для `host_statistics64` — снова `MemoryLayout.size`, см. [XCODE-COMPAT.md](XCODE-COMPAT.md) №7 |
+| — | `d0555093` | фикс регрессии памяти | см. ниже |
+
+### Конфликты и чем резолвили
+
+- **`Modules/Disk/readers.swift`** (`c9e7ebe3`) — как и планировалось 18.10: их `ActivityReader` целиком, поверх заново наложен наш кэш из `ca79a8e6`. Одна lazy `DASession`; `driveDetails` + `DADiskCopyIOMedia` + BFS по IORegistry кэшируются на URL тома (`Target`: BSD-имя, флаг removable, `drive`, retained-драйвер, его id) и пересчитываются, только если у тома сменилось BSD-имя или настройка removable, плюс после pause/stop/wake (их `reset()`). На тик остаются `mountedVolumeURLs`, `DADiskCreateFromVolumePath` + `DADiskGetBSDName` и чтение одного свойства `Statistics`. Старый `getDeviceIOParent(_:level:)` и наши правки в нём ушли вместе с ним. Их новые `DiskTests` проходят.
+- **`main.swift` у CPU/Disk/Net/RAM** (`5808bf92`) — в `callbackWhenUpdateNumberOfProcesses` взяты обе стороны: их `previewView.numberOfProcessesUpdated()` и наш `processReader?.requestRead()` вместо голого `read()` (иначе вернулась бы гонка, которую закрывал `fda9e7a8`).
+- **`Kit/module/portal.swift`, `Modules/Sensors/portal.swift`, `Stats/Views/CombinedView.swift`** (`a2836b69`) — наша сторона: у форка свой лэйаут порталов (без `PortalWrapper.body`/`height`, грид в Combined), а их width-констрейнты целятся в апстримную архитектуру. Взяты слившиеся сами width-констрейнты в `Sensors/popup.swift` и `ValueSensorView` → ширина контейнера в портале Sensors. Глазами не проверено: Sensors выключен.
+- **`Kit/module/reader.swift`, `Kit/plugins/DB.swift`** (`f1aa0cdf`) — обе стороны. Остались наши `moduleKey`, `stateLock`, `readIfIdle`/`requestRead`, статические `JSONEncoder`/`JSONDecoder`, приватный `_writeTS` без публичного `writeTS`. Взяты их `recordHistory`, удаление параметра `ts:` у `DB.insert`, `active = true` до запуска репитера, `DB.flush()` при выходе. **Сейчас история ничего не делает**: ни один ридер не создаётся с `history: true`, `loadHistory` никто не зовёт. Остаётся таймер раз в 60 с на `historyQueue` и prune `history@`-префикса раз в 15 мин — на пустой базе это пустой Seek. Когда апстрим включит историю у ридеров, `recordHistory` будет на каждом тике кодировать значение в JSON, разбирать обратно и обходить дерево — **смотреть сюда первым при следующем синке**.
+
+### Регрессия памяти и фикс (`d0555093`)
+
+После первого деплоя 850 RSS был ~390 МБ против ~257 у 849 (A/B в одном окне, два раунда). `footprint`: 850 — 260 / 248 МБ, 849 — 189 МБ; весь прирост в регионе **CoreAnimation**: 57–61 МБ против 0.9 МБ, это 15 регионов по 4 МБ (= 1024×1024×4). `git bisect run` по Debug-сборкам (порог CoreAnimation ≥ 20 МБ через 120 с после старта, compat RAM накладывался на лету) указал на `3bca6435` (`5808bf92`).
+
+Механизм: превью заполняют строки процессов один раз при старте, ещё не будучи показанными (`|| !self.initializedProcesses` в `processCallback`), а layer-backed `NSImageView` в каждой строке растеризует в слой 1024-px представление иконки приложения. Попапы так не делали — до открытия не рисуются. Проверка гипотезы: с `Constants.defaultProcessIcon` вместо иконок приложений CoreAnimation 61 МБ → 4.6 МБ (один 4-МБ регион — сама дефолтная иконка).
+
+Фикс: `ProcessIconCache` хранит drawing-handler `NSImage` 18 pt (самая крупная иконка строки), который растеризуется в размер показа. Debug через 120 с: CoreAnimation 864 КБ, 4-МБ регионов нет. Задеплоенный Release через 150 с: footprint **196 МБ**, CoreAnimation 736 КБ (849 — 189 МБ, одиночные замеры). Иконки в превью/попапах после фикса **глазами не смотрелись**.
+
+**Грабли на будущее:** после синка, который трогает UI, сравнивать `footprint` + `vmmap --summary` с прошлой сборкой, а не только RSS. Скрипт bisect (`git bisect run` + Debug-сборка + замер `vmmap`) работает за ~5 шагов по 3–4 мин; ловушка — `git bisect start` не принимает `-q` (молча считает его ревизией).
+
+### Проверки, сборка, деплой
+
+- Debug под Xcode 16.0 — **BUILD SUCCEEDED** после compat `78d85924`.
+- Тесты (`xcodebuild test`, схема Stats): 25, из них 3 падения — `KitTests.testIsNewestVersion_beta` (×2 ассерта) и `RAM.testProcessReader_parseProcess`. Синк их не задевает: `isNewestVersion` и `parseProcess` идентичны бэкапу. Значит, падали и раньше; на бэкапе прогоном не подтверждено.
+- `i18n.py check`: те же 418 ошибок = 11 наших ключей × 38 языков, дублей нет. Новый ключ `Animate icon` пришёл с ru/uk.
+- Release по [SIGNING.md](SIGNING.md) — **BUILD SUCCEEDED**, sanity-check зелёный: OU в `SMPrivilegedExecutables`, `TeamIdentifier` приложения, хелпера и appex — `T5V6W6793A`; 3.0.23 (850) в приложении и appex; `personal-information.location` на месте; `codesign --verify --deep --strict` проходит.
+- **Задеплоено** дважды под одним номером 850: сначала без фикса памяти, затем с `d0555093` (текущая). SHA-256 бинаря совпал, verify на установленной копии зелёный. `/tmp/Stats-backup.app` — **849** (каталога перед деплоем не было). `local/build` в `origin` не пушилась.
+
+---
+
 ## 2026-10-22 — точечный пик `5de11712` вне очереди (билд 849)
 
 Доклад по трём коммитам после разбора 18.10 (`57314555..5de11712`) → «давай 5de11712». Взят **только он**, остальная дельта v3.0.22 по-прежнему отложена. **Последний взятый по порядку апстримный коммит — всё ещё `88d5359a`**; при следующем синке `5de11712` уже есть (наш `4adf4209`, пик с `-x`), его пропустить. `MARKETING_VERSION` осталась 3.0.21, сборка 848 → 849 (`33049a64`).
