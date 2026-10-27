@@ -18,6 +18,16 @@ internal class Popup: PopupWrapper {
     private let detailsHeight: CGFloat = (22*7) + Constants.Popup.separatorHeight
     
     private let loadCache = PopupCache<GPU_Info>()
+    private let processesCache = PopupCache<[TopProcess]>()
+    private var processes: ProcessesView? = nil
+    private var processesView: NSView? = nil
+    
+    private var numberOfProcesses: Int {
+        Store.shared.int(key: "\(self.title)_processes", defaultValue: 8)
+    }
+    private var processesHeight: CGFloat {
+        (22*CGFloat(self.numberOfProcesses)) + (self.numberOfProcesses == 0 ? 0 : Constants.Popup.separatorHeight + 22)
+    }
     
     private var usageCircle: PieChartView? = nil
     private var renderCircle: PieChartView? = nil
@@ -42,7 +52,7 @@ internal class Popup: PopupWrapper {
         // Two-column layout: the sections are handed over in reading order and the balancer decides
         // where the columns split, so the popup is roughly half as tall as the old single stack.
         self.makeTwoColumns()
-        self.setSections([self.initDashboard(), self.initChart(), self.initDetails()])
+        self.setSections([self.initDashboard(), self.initChart(), self.initDetails(), self.initProcesses()])
         self.layoutColumns()
     }
     
@@ -56,6 +66,11 @@ internal class Popup: PopupWrapper {
     
     public override func appear() {
         self.replay(self.loadCache, render: self.renderLoad)
+        self.replay(self.processesCache, render: self.renderProcesses)
+    }
+    
+    public override func disappear() {
+        self.processes?.setLock(false)
     }
     
     private func initDashboard() -> NSView {
@@ -143,7 +158,64 @@ internal class Popup: PopupWrapper {
         return view
     }
     
+    private func initProcesses() -> NSView {
+        if self.numberOfProcesses == 0 {
+            let v = NSView()
+            v.heightAnchor.constraint(equalToConstant: 0).isActive = true
+            self.processesView = v
+            return v
+        }
+        
+        let view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: self.processesHeight))
+        view.heightAnchor.constraint(equalToConstant: self.processesHeight).isActive = true
+        let separator = separatorView(localizedString("Top processes"), origin: NSPoint(x: 0, y: self.processesHeight-Constants.Popup.separatorHeight), width: Constants.Popup.width)
+        let container: ProcessesView = ProcessesView(
+            frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: separator.frame.origin.y),
+            values: [(localizedString("Usage"), nil)],
+            n: self.numberOfProcesses
+        )
+        self.processes = container
+        
+        view.addSubview(separator)
+        view.addSubview(container)
+        
+        self.processesView = view
+        return view
+    }
+    
     // MARK: - Callback
+    
+    public func processCallback(_ list: [TopProcess]?) {
+        guard let list else { return }
+        self.apply(list, to: self.processesCache, render: self.renderProcesses)
+    }
+    
+    private func renderProcesses(_ list: [TopProcess]) {
+        guard let view = self.processes else { return }
+        
+        for i in 0..<view.count {
+            if list.indices.contains(i) {
+                let process = list[i]
+                view.set(i, process, [String(format: "%.1f%%", process.usage)])
+            } else {
+                view.set(i, nil, [])
+            }
+        }
+    }
+    
+    public func numberOfProcessesUpdated() {
+        if self.processes?.count == self.numberOfProcesses { return }
+        
+        if let old = self.processesView {
+            self.removeSection(old)
+            old.removeFromSuperview()
+        }
+        self.processesView = nil
+        self.processes = nil
+        self.appendSection(self.initProcesses())
+        self.replay(self.processesCache, render: self.renderProcesses)
+        self.layoutColumns()
+    }
     
     public func loadCallback(_ value: GPU_Info) {
         self.apply(value, to: self.loadCache, render: self.renderLoad)
