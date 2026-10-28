@@ -24,7 +24,7 @@
 |---|---|---|
 | ~~не считать ANE+FPS без видимого потребителя~~ | ≈ 15 % | **сделано в 853** (`InfoReader.extrasVisible`: попап/настройки GPU, Combined включён, текстовый виджет с `$ane`/`$fps`; `Module.popupVisible`/`settingsVisible` стали `public private(set)`). Профиль 90 с: `InfoReader.read` 230 → 71 мс, ANE/FPS — 0. Первый тик после открытия: ANE 0, FPS пусто. Попап GPU с ANE/FPS проверен глазами пользователем — на месте. Откат — `/tmp/Stats-backup.app` = 852 |
 | `GPU_updateInterval` 1 → 2 с | ≈ 10 % + перерисовки | вкус |
-| `CA::Transaction::commit` на главном | 18 % | не разобрано; следующий шаг — сколько коммитов/с и от какого виджета |
+| `CA::Transaction::commit` на главном | 18 % | разобрано на 853: ~75 % — фиксированная цена перерисовки в AppKit/CA, ~25 % — наш `BarChart.draw` + `SpeedWidget.draw`. Рычаг — только число перерисовок. **В 854** допуск `BarChart.setValue` 1 % → 2 % (≈ 1 физ. пиксель: столбик 40–66 px): `BarChart.draw` 42 → 28 мс / 90 с, commit 220 → 133 (одиночные прогоны, commit шумит — `Speed.draw` тоже упал 15 → 7, хотя его не трогали). Откат — `/tmp/Stats-backup.app` = 853 |
 | кэш `SCNetworkInterfaceCopyAll` по BSD-имени в `getDetails` | ≈ 4 % | риск устаревшего MAC/имени; не мерилось |
 
 Сборка 852: Release — **BUILD SUCCEEDED**, sanity-check зелёный (3 OU + appex = `T5V6W6793A`, 3.0.23 (852), location-entitlement, `codesign --verify --deep --strict`). **Задеплоено**, SHA-256 совпал. `/tmp/Stats-backup.app` — **851** (850 оттуда удалён).
