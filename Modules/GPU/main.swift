@@ -149,6 +149,14 @@ public class GPU: Module {
         self.infoReader = InfoReader(.GPU) { [weak self] value in
             self?.infoCallback(value)
         }
+        self.infoReader?.extrasVisible = { [weak self] in
+            guard let self else { return false }
+            if self.popupVisible || self.settingsVisible { return true }
+            // The combined popup does not report its visibility to modules, so keep reading there.
+            if Store.shared.bool(key: "CombinedModules", defaultValue: false) { return true }
+            let text = self.textValue
+            return (text.contains("$ane") || text.contains("$fps")) && self.menuBar.widgets.contains { $0.type == .text && $0.isActive }
+        }
         self.processReader = ProcessReader(.GPU) { [weak self] value in
             self?.popupView.processCallback(value)
             self?.previewView.processCallback(value)

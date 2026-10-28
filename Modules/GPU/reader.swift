@@ -65,7 +65,11 @@ internal class InfoReader: Reader<GPUs> {
     private var framesSubscription: IOReportSubscriptionRef? = nil
     private var previousFramesCount: Int64 = 0
     private var previousFramesTime: CFAbsoluteTime = 0
-    
+
+    // ANE and FPS cost two IOReport samples per tick and are shown only in the popup, the preview
+    // and the text widget; the module tells the reader when one of those is on screen.
+    public var extrasVisible: () -> Bool = { true }
+
     public override func setup() {
         if let list = SystemKit.shared.device.info.gpu {
             self.displays = list
@@ -125,12 +129,22 @@ internal class InfoReader: Reader<GPUs> {
         }
 
         #if arch(arm64)
-        let anePower = self.readANEPower()
-        let aneUtil = anePower.map { min(1.0, max(0.0, $0 / self.aneMaxPower)) }
-        let fpsValue = self.readFrames()
-        for i in self.gpus.list.indices where self.gpus.list[i].IOClass.lowercased().contains("agx") {
-            self.gpus.list[i].aneUtilization = aneUtil ?? 0
-            self.gpus.list[i].fps = fpsValue
+        if self.extrasVisible() {
+            let anePower = self.readANEPower()
+            let aneUtil = anePower.map { min(1.0, max(0.0, $0 / self.aneMaxPower)) }
+            let fpsValue = self.readFrames()
+            for i in self.gpus.list.indices where self.gpus.list[i].IOClass.lowercased().contains("agx") {
+                self.gpus.list[i].aneUtilization = aneUtil ?? 0
+                self.gpus.list[i].fps = fpsValue
+            }
+        } else {
+            // Drop the baselines so the first value after reopening is not an average over the hidden period.
+            self.previousANERead = nil
+            self.previousFramesTime = 0
+            for i in self.gpus.list.indices where self.gpus.list[i].IOClass.lowercased().contains("agx") {
+                self.gpus.list[i].aneUtilization = nil
+                self.gpus.list[i].fps = nil
+            }
         }
         #endif
 

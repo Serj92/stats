@@ -102,8 +102,8 @@ open class Module {
     
     private let log: NextLog
     private var readers: [Reader_p] = []
-    private var popupVisible = false
-    private var settingsVisible = false
+    public private(set) var popupVisible = false
+    public private(set) var settingsVisible = false
     private var readersAsleep = false
     
     private var pauseState: Bool {
