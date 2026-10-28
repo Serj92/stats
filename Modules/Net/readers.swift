@@ -524,14 +524,16 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate, CLLocationMa
             }
         }
         
-        if let prefs = SCPreferencesCreate(nil, "Stats" as CFString, nil), let services = SCNetworkServiceCopyAll(prefs) as? [SCNetworkService] {
-            for service in services {
-                if let interface = SCNetworkServiceGetInterface(service), let name = SCNetworkInterfaceGetBSDName(interface), name as String == interfaceID,
-                   let serviceID = SCNetworkServiceGetServiceID(service) {
-                    let key = "State:/Network/Service/\(serviceID)/DNS" as CFString
-                    if let settings = SCDynamicStoreCopyValue(nil, key) as? [String: Any] {
-                        self.usage.dns = settings["ServerAddresses"] as? [String] ?? []
-                    }
+        // Service → BSD name straight from configd's Setup: keys. Going through SCNetworkServiceCopyAll
+        // + SCNetworkServiceGetInterface built a full interface object (bridge lookup, IORegistry
+        // walk) for every configured service: ~5 ms per call against ~0.1 ms for this.
+        let pattern = "Setup:/Network/Service/[^/]+/Interface" as CFString
+        if let services = SCDynamicStoreCopyMultiple(nil, nil, [pattern] as CFArray) as? [String: [String: Any]] {
+            for (key, value) in services.sorted(by: { $0.key < $1.key }) where value["DeviceName"] as? String == interfaceID {
+                let serviceID = key.split(separator: "/")[3]
+                let key = "State:/Network/Service/\(serviceID)/DNS" as CFString
+                if let settings = SCDynamicStoreCopyValue(nil, key) as? [String: Any] {
+                    self.usage.dns = settings["ServerAddresses"] as? [String] ?? []
                 }
             }
         }

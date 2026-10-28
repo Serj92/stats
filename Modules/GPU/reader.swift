@@ -371,8 +371,14 @@ internal class InfoReader: Reader<GPUs> {
         
         let size = CFDictionaryGetCount(channel)
         guard let mutable = CFDictionaryCreateMutableCopy(kCFAllocatorDefault, size, channel),
-              let dict = mutable as? [String: Any], dict["IOReportChannels"] != nil else { return }
-        
+              let dict = mutable as? [String: Any], let all = dict["IOReportChannels"] as? [CFDictionary] else { return }
+
+        // readANEPower() only sums the ANE channels; subscribing to the whole group (~200 channels
+        // here) made every sample collect and decode all of them.
+        let ane = all.filter { (IOReportChannelGetChannelName($0)?.takeUnretainedValue() as String?)?.starts(with: "ANE") ?? false }
+        guard !ane.isEmpty else { return }
+        (mutable as NSMutableDictionary)["IOReportChannels"] = ane
+
         self.aneChannels = mutable
         var sub: Unmanaged<CFMutableDictionary>?
         self.aneSubscription = IOReportCreateSubscription(nil, mutable, &sub, 0, nil)
