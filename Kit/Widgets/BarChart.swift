@@ -275,7 +275,9 @@ public class BarChart: WidgetWrapper {
 
     public func setValue(_ newValue: [[ColorValue]]) {
         let updated = self.queue.sync { () -> Bool in
-            let tolerance: CGFloat = 0.01
+            // ~1 physical pixel of a menu-bar bar (40-66 px tall on Retina): smaller changes
+            // redrew the widget without moving a pixel.
+            let tolerance: CGFloat = 0.02
             let isDifferent = self._value.count != newValue.count || zip(self._value, newValue).contains { row1, row2 in
                 row1.count != row2.count || zip(row1, row2).contains { val1, val2 in
                     abs(val1.value - val2.value) > tolerance || val1.color != val2.color
